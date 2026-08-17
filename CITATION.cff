@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+message: >-
+  Please cite the original FractBias publication when using kfFractBias.
+title: kfFractBias
+type: software
+version: 0.1.0
+license: MIT
+repository-code: https://github.com/kfuku52/kfFractBias
+preferred-citation:
+  type: article
+  title: "FractBias: a graphical tool for assessing fractionation bias following polyploidy"
+  authors:
+    - family-names: Joyce
+      given-names: Blake L.
+    - family-names: Haug-Baltzell
+      given-names: Asher
+    - family-names: Davey
+      given-names: Sean
+    - family-names: Bomhoff
+      given-names: Matthew
+    - family-names: Schnable
+      given-names: James C.
+    - family-names: Lyons
+      given-names: Eric
+  journal: Bioinformatics
+  volume: 33
+  issue: 4
+  start: 552
+  end: 554
+  year: 2017
+  doi: 10.1093/bioinformatics/btw666
+

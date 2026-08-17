@@ -1,23 +1,130 @@
-# SynMapFractBiasAnalysis
-Fractionation bias analysis tool for investigating whole genome duplication gene loss. 
+# kfFractBias
 
-## Explanation of versions on GitHub repo
-1. iPythonFractBias  
-  A version of FractBias that can be used in an interactive iPython Jupyter Notebook (http://ipython.org/notebook.html).
-2. CommandLineFractBias  
-  The version of FractBias that includes arguements so that a web-based platform can pass variables to complete analysis. This version is installed on the CoGe (Comparative Genomics) platform here: https://genomevolution.org/CoGe/SynMap.pl . It can be run using the SynMap tool [1].
+`kfFractBias` is a Python 3 command-line program for calculating and plotting
+gene-retention and fractionation-bias profiles. It is a maintained fork and
+offline redesign of
+[`SynMapFractBiasAnalysis`](https://github.com/bjoyce3/SynMapFractBiasAnalysis).
 
-## Scientific Summary
-Following polyploidy events, genomes undergo massive reduction in gene content through a process known as fractionation.  Importantly, the fractionation process is not random, and there is often a bias as to which homeologous chromosome retains or loses more genes.  The process of characterizing whole genome fractionation requires identifying syntenic regions across genomes followed by post-processing of those syntenic datasets to identify and plot gene retention patterns. We have developed a tool, FractBias, to calculate and visualize gene retention and fractionation patterns across whole genomes.  Through integration with SynMap and its parent platform CoGe, over 25,000 genomes are pre-loaded and available for analysis, as well as letting researchers integrate their own data with security options to keep them private or make them publicly available.
+The original FractBias implementation was developed by Blake L. Joyce, Asher
+Haug-Baltzell, Sean Davey, Matthew Bomhoff, James C. Schnable, and Eric Lyons.
+The original Python 2 and notebook implementations remain under
+`Code_FractBias/` for provenance.
 
-## Notes
-1. Docuementation for using the web-based SynMap tool can be found here: https://genomevolution.org/wiki/index.php/SynMap
-2. Documentation for using FractBias specifically can be found here: https://genomevolution.org/wiki/index.php/FractBias 
-3. The SynMap Syntenic Depth option must be set for FractBias to work
-4. Though FractBias was originally designed to investigate genome fractionation after polyploid events, it can also be used in 1:1 comparisons to see chromosome rearrangements between species
-5. The example data included can be run either through iPython notebooks or the command line
-5. Detailed instructions for running the example data can be found in the README.md file in either the iPythonFractBias or CommandLineFractBias repo folder
+## What is different
 
-## References
-1. Lyons,E. et al. (2008) The value of nonmodel genomes and an example using SynMap within CoGe to dissect the hexaploidy that predates the rosids. Trop. Plant Biol., 1, 181–190
-2. Joyce, B.L. Haug-Baltzell, A. Davey, S., Bomhoff, M., Schnable, J.C. Lyons, E. (2016) FractBias: a graphical tool for assessing fractionation bias following polyploidy. Bioinformatics DOI: https://doi.org/10.1093/bioinformatics/btw666.
+- Python 3 package and the `kffractbias` executable
+- no CoGe account, genome ID, API, or JWT requirement
+- calculation from either JCVI anchors or legacy SynMap/DAGCHAINER output
+- end-to-end local comparison from target/query CDS FASTA and GFF annotations
+- local JCVI MCscan and QUOTA-ALIGN execution
+- explicit target:query syntenic-depth quota
+- long-form gene and sliding-window TSV outputs
+- JSON provenance with input hashes and parameters
+- non-interactive PDF and PNG plots
+
+After the software and its dependencies are installed, analysis does not need
+network access.
+
+## Installation
+
+```bash
+python -m pip install .
+kffractbias version
+```
+
+The `compare` command requires JCVI and one of its supported local aligners.
+The default `last` aligner requires `lastal` and `lastdb`. JCVI QUOTA-ALIGN
+also requires its mixed-integer solver dependency.
+
+## Commands
+
+### Calculate from precomputed synteny
+
+`calculate` accepts a JCVI `.anchors` file or SynMap/DAGCHAINER output. The
+target and query BED identifiers must match the synteny identifiers.
+
+```bash
+kffractbias calculate \
+  --synteny target.query.lifted.1x2.anchors \
+  --format jcvi \
+  --target-bed target.bed \
+  --query-bed query.bed \
+  --target-name Sorghum_bicolor \
+  --query-name Zea_mays \
+  --window-size 100 \
+  --denominator all \
+  --output-dir results \
+  --prefix sorghum_maize
+```
+
+### Compare two annotations end-to-end
+
+`compare` detects matching GFF feature/attribute identifiers, prepares JCVI
+BED and CDS inputs, runs MCscan and QUOTA-ALIGN, and then calculates the
+fractionation profile.
+
+```bash
+kffractbias compare \
+  --target-cds target.cds.fa \
+  --target-gff target.gff3 \
+  --query-cds query.cds.fa \
+  --query-gff query.gff3 \
+  --target-name Sorghum_bicolor \
+  --query-name Zea_mays \
+  --quota 1:2 \
+  --window-size 100 \
+  --cpus 8 \
+  --output-dir results \
+  --prefix sorghum_maize
+```
+
+The quota is always explicit: `1:2` means one expected target region for two
+expected query regions. Reversing target and query also requires reversing the
+quota.
+
+### Validate annotations
+
+```bash
+kffractbias validate \
+  --target-cds target.cds.fa --target-gff target.gff3 \
+  --query-cds query.cds.fa --query-gff query.gff3
+```
+
+Use `--target-feature` with `--target-attribute`, and the corresponding query
+options, when automatic GFF identifier detection is not appropriate.
+
+Other commands are `kffractbias formats` and `kffractbias version`.
+
+## Outputs
+
+For a prefix such as `sorghum_maize`, kfFractBias writes:
+
+- `sorghum_maize.genes.tsv`: per-target-gene retention and matching query IDs
+- `sorghum_maize.windows.tsv`: sliding-window retention fractions and percent
+- `sorghum_maize.summary.json`: parameters, counts, input hashes, and outputs
+- `sorghum_maize.plot.pdf` and `.plot.png`: chromosome-wise profiles
+- `sorghum_maize.synteny/`: retained JCVI working data from `compare`
+
+`--denominator all` uses every target gene in each window. `--denominator
+syntenic` first removes target genes without any retained query match, matching
+the two denominator choices exposed by the original FractBias implementation.
+
+## Development
+
+```bash
+python -m pip install -e '.[test]'
+pytest
+```
+
+## Citation
+
+If you use kfFractBias, cite the original FractBias publication:
+
+> Joyce BL, Haug-Baltzell A, Davey S, Bomhoff M, Schnable JC, Lyons E.
+> FractBias: a graphical tool for assessing fractionation bias following
+> polyploidy. Bioinformatics. 2017;33(4):552–554.
+> <https://doi.org/10.1093/bioinformatics/btw666>
+
+## License
+
+MIT. The original copyright and license are retained in `MIT License`.
