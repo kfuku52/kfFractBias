@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .io import Gene, natural_key, read_bed, read_synteny_pairs, sha256_file
+from .io import Gene, detect_synteny_format, natural_key, read_bed, read_synteny_pairs, sha256_file
 
 
 @dataclass(frozen=True)
@@ -32,6 +32,7 @@ class AnalysisConfig:
     exclude_seqid_regex: str = ""
     make_plot: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
+    additional_inputs: dict[str, Path] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -80,7 +81,10 @@ def _filter_genes(
     missing = requested - available
     if missing:
         raise ValueError(f"Unknown {label} sequence identifiers: {', '.join(sorted(missing, key=natural_key))}")
-    pattern = re.compile(exclude_seqid_regex) if exclude_seqid_regex else None
+    try:
+        pattern = re.compile(exclude_seqid_regex) if exclude_seqid_regex else None
+    except re.error as exc:
+        raise ValueError(f"Invalid sequence exclusion regex: {exc}") from exc
     selected = tuple(
         gene
         for gene in genes
@@ -98,8 +102,17 @@ def _validate_config(config: AnalysisConfig) -> None:
         raise ValueError("step size must be at least 1")
     if config.denominator not in {"all", "syntenic"}:
         raise ValueError("denominator must be 'all' or 'syntenic'")
-    if not config.prefix or Path(config.prefix).name != config.prefix or config.prefix in {".", ".."}:
+    if (
+        not config.prefix
+        or Path(config.prefix).name != config.prefix
+        or config.prefix in {".", ".."}
+        or any(ord(character) < 32 or ord(character) == 127 for character in config.prefix)
+    ):
         raise ValueError("prefix must be a non-empty filename component")
+    reserved_inputs = {"synteny", "target_bed", "query_bed"}
+    conflicts = reserved_inputs.intersection(config.additional_inputs)
+    if conflicts:
+        raise ValueError(f"Additional input labels are reserved: {', '.join(sorted(conflicts))}")
 
 
 def calculate_fractionation_bias(config: AnalysisConfig) -> AnalysisResult:
@@ -112,9 +125,12 @@ def calculate_fractionation_bias(config: AnalysisConfig) -> AnalysisResult:
     )
     target_by_id = {gene.gene_id: gene for gene in target_genes}
     query_by_id = {gene.gene_id: gene for gene in query_genes}
+    resolved_synteny_format = (
+        detect_synteny_format(config.synteny_path) if config.synteny_format == "auto" else config.synteny_format
+    )
     pairs = read_synteny_pairs(
         config.synteny_path,
-        config.synteny_format,
+        resolved_synteny_format,
         set(target_by_id),
         set(query_by_id),
     )
@@ -217,6 +233,17 @@ def calculate_fractionation_bias(config: AnalysisConfig) -> AnalysisResult:
             window_size=config.window_size,
         )
 
+    inputs = {
+        "synteny": {"path": str(config.synteny_path), "sha256": sha256_file(config.synteny_path)},
+        "target_bed": {"path": str(config.target_bed), "sha256": sha256_file(config.target_bed)},
+        "query_bed": {"path": str(config.query_bed), "sha256": sha256_file(config.query_bed)},
+    }
+    inputs.update(
+        {
+            label: {"path": str(path), "sha256": sha256_file(path)}
+            for label, path in sorted(config.additional_inputs.items())
+        }
+    )
     summary = {
         "schema_version": 1,
         "program": "kfFractBias",
@@ -227,7 +254,8 @@ def calculate_fractionation_bias(config: AnalysisConfig) -> AnalysisResult:
             "window_size": config.window_size,
             "step_size": config.step_size,
             "denominator": config.denominator,
-            "synteny_format": config.synteny_format,
+            "synteny_format": resolved_synteny_format,
+            "requested_synteny_format": config.synteny_format,
             "target_seqids": sorted({gene.seqid for gene in target_genes}, key=natural_key),
             "query_seqids": ordered_query_seqids,
             "exclude_seqid_regex": config.exclude_seqid_regex,
@@ -240,11 +268,7 @@ def calculate_fractionation_bias(config: AnalysisConfig) -> AnalysisResult:
             "gene_table_row_count": len(gene_rows),
             "window_table_row_count": len(window_rows),
         },
-        "inputs": {
-            "synteny": {"path": str(config.synteny_path), "sha256": sha256_file(config.synteny_path)},
-            "target_bed": {"path": str(config.target_bed), "sha256": sha256_file(config.target_bed)},
-            "query_bed": {"path": str(config.query_bed), "sha256": sha256_file(config.query_bed)},
-        },
+        "inputs": inputs,
         "outputs": {
             "genes": str(genes_path),
             "windows": str(windows_path),

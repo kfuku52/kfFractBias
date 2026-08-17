@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -25,8 +26,41 @@ def _output_path(value: str) -> Path:
 
 
 def _prefix(value: str) -> str:
-    if not value or Path(value).name != value or value in {".", ".."}:
+    if (
+        not value
+        or Path(value).name != value
+        or value in {".", ".."}
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
         raise argparse.ArgumentTypeError("prefix must be a non-empty filename component")
+    return value
+
+
+def _positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def _unit_interval(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be greater than 0 and at most 1") from exc
+    if not 0 < parsed <= 1:
+        raise argparse.ArgumentTypeError("must be greater than 0 and at most 1")
+    return parsed
+
+
+def _regex(value: str) -> str:
+    try:
+        re.compile(value)
+    except re.error as exc:
+        raise argparse.ArgumentTypeError(f"invalid regular expression: {exc}") from exc
     return value
 
 
@@ -35,8 +69,8 @@ def _add_output_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--prefix", type=_prefix, default="kffractbias", help="Output filename prefix")
     parser.add_argument("--target-name", default="target", help="Target label used in metadata and plots")
     parser.add_argument("--query-name", default="query", help="Query label used in metadata and plots")
-    parser.add_argument("--window-size", type=int, default=100, help="Genes per sliding window (default: 100)")
-    parser.add_argument("--step-size", type=int, default=1, help="Genes advanced per window (default: 1)")
+    parser.add_argument("--window-size", type=_positive_int, default=100, help="Genes per sliding window (default: 100)")
+    parser.add_argument("--step-size", type=_positive_int, default=1, help="Genes advanced per window (default: 1)")
     parser.add_argument(
         "--denominator",
         choices=("all", "syntenic"),
@@ -45,7 +79,7 @@ def _add_output_options(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--target-seqids", action="append", default=[], help="Comma-separated target sequences")
     parser.add_argument("--query-seqids", action="append", default=[], help="Comma-separated query sequences")
-    parser.add_argument("--exclude-seqid-regex", default="", help="Regex for sequences to exclude")
+    parser.add_argument("--exclude-seqid-regex", type=_regex, default="", help="Regex for sequences to exclude")
     parser.add_argument("--no-plot", action="store_true", help="Do not create PDF and PNG plots")
 
 
@@ -60,7 +94,7 @@ def _add_annotation_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--query-attribute", help="Query GFF identifier attribute override, e.g. ID")
     parser.add_argument(
         "--minimum-mapping-fraction",
-        type=float,
+        type=_unit_interval,
         default=0.5,
         help="Minimum fraction of CDS identifiers that must map to each GFF (default: 0.5)",
     )
@@ -92,8 +126,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_annotation_options(compare)
     compare.add_argument("--quota", required=True, type=validate_quota, help="Expected target:query depth, e.g. 1:2")
-    compare.add_argument("--cpus", type=int, default=1, help="Threads for sequence alignment")
-    compare.add_argument("--cscore", type=float, default=0.7, help="JCVI C-score cutoff")
+    compare.add_argument("--cpus", type=_positive_int, default=1, help="Threads for sequence alignment")
+    compare.add_argument("--cscore", type=_unit_interval, default=0.7, help="JCVI C-score cutoff")
     compare.add_argument("--aligner", choices=("last", "blast"), default="last")
     compare.add_argument("--force", action="store_true", help="Replace an existing synteny work directory")
     _add_output_options(compare)
@@ -110,7 +144,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _analysis_config(args: argparse.Namespace, *, synteny: Path, target_bed: Path, query_bed: Path, metadata=None):
+def _analysis_config(
+    args: argparse.Namespace,
+    *,
+    synteny: Path,
+    target_bed: Path,
+    query_bed: Path,
+    metadata=None,
+    additional_inputs=None,
+):
     return AnalysisConfig(
         synteny_path=synteny,
         synteny_format=args.format if hasattr(args, "format") else "jcvi",
@@ -128,6 +170,7 @@ def _analysis_config(args: argparse.Namespace, *, synteny: Path, target_bed: Pat
         exclude_seqid_regex=args.exclude_seqid_regex,
         make_plot=not args.no_plot,
         metadata=metadata or {},
+        additional_inputs=additional_inputs or {},
     )
 
 
@@ -210,6 +253,12 @@ def command_compare(args: argparse.Namespace) -> int:
             target_bed=synteny.target.bed_path,
             query_bed=synteny.query.bed_path,
             metadata=metadata,
+            additional_inputs={
+                "source_target_cds": args.target_cds,
+                "source_target_gff": args.target_gff,
+                "source_query_cds": args.query_cds,
+                "source_query_gff": args.query_gff,
+            },
         )
     )
     _print_result(result)

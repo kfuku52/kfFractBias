@@ -1,6 +1,9 @@
 import csv
+import hashlib
 import json
 from pathlib import Path
+
+import pytest
 
 from kffractbias.analysis import AnalysisConfig, calculate_fractionation_bias
 
@@ -59,6 +62,8 @@ def test_calculate_writes_expected_retention_windows(tmp_path):
     summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
     assert summary["counts"]["synteny_pair_count"] == 3
     assert summary["parameters"]["denominator"] == "all"
+    assert summary["parameters"]["synteny_format"] == "jcvi"
+    assert summary["parameters"]["requested_synteny_format"] == "jcvi"
 
 
 def test_syntenic_denominator_removes_unmatched_target_genes(tmp_path):
@@ -79,6 +84,8 @@ def test_syntenic_denominator_removes_unmatched_target_genes(tmp_path):
     assert summary["counts"]["target_gene_count"] == 4
     assert summary["counts"]["analyzed_target_gene_count"] == 3
     assert len(read_tsv(result.windows_path)) == 4
+    assert summary["parameters"]["synteny_format"] == "jcvi"
+    assert summary["parameters"]["requested_synteny_format"] == "auto"
 
 
 def test_exact_sequence_filtering(tmp_path):
@@ -97,3 +104,40 @@ def test_exact_sequence_filtering(tmp_path):
     )
     assert {row["query_seqid"] for row in result.window_rows} == {"chrA"}
 
+
+def test_invalid_exclusion_regex_is_reported_as_value_error(tmp_path):
+    target, query, anchors = make_inputs(tmp_path)
+    with pytest.raises(ValueError, match="Invalid sequence exclusion regex"):
+        calculate_fractionation_bias(
+            AnalysisConfig(
+                synteny_path=anchors,
+                synteny_format="jcvi",
+                target_bed=target,
+                query_bed=query,
+                output_dir=tmp_path / "out",
+                exclude_seqid_regex="[",
+                make_plot=False,
+            )
+        )
+
+
+def test_additional_inputs_are_hashed_in_summary(tmp_path):
+    target, query, anchors = make_inputs(tmp_path)
+    source = write(tmp_path / "source.fa", ">gene1\nATG\n")
+    result = calculate_fractionation_bias(
+        AnalysisConfig(
+            synteny_path=anchors,
+            synteny_format="jcvi",
+            target_bed=target,
+            query_bed=query,
+            output_dir=tmp_path / "out",
+            window_size=2,
+            make_plot=False,
+            additional_inputs={"source_target_cds": source},
+        )
+    )
+    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+    assert summary["inputs"]["source_target_cds"] == {
+        "path": str(source),
+        "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+    }

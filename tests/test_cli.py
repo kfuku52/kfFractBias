@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from kffractbias.cli import build_parser, main
 
 
@@ -48,3 +50,29 @@ def test_formats_cli(capsys):
     assert "jcvi" in output
     assert "synmap" in output
 
+
+@pytest.mark.parametrize(
+    ("option", "value"),
+    (
+        ("--window-size", "0"),
+        ("--step-size", "-1"),
+        ("--exclude-seqid-regex", "["),
+    ),
+)
+def test_calculate_rejects_invalid_analysis_options_during_parsing(option, value):
+    parser = build_parser()
+    with pytest.raises(SystemExit) as caught:
+        parser.parse_args(
+            [
+                "calculate",
+                "--synteny",
+                __file__,
+                "--target-bed",
+                __file__,
+                "--query-bed",
+                __file__,
+                option,
+                value,
+            ]
+        )
+    assert caught.value.code == 2

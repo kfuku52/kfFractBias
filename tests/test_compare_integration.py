@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 import random
 from pathlib import Path
@@ -69,3 +71,15 @@ def test_compare_runs_jcvi_quota_align_offline(tmp_path):
     assert (output_dir / "synthetic.summary.json").is_file()
     assert (output_dir / "synthetic.plot.pdf").is_file()
     assert (output_dir / "synthetic.plot.png").is_file()
+    summary = json.loads((output_dir / "synthetic.summary.json").read_text(encoding="utf-8"))
+    source_inputs = {
+        "source_target_cds": target_cds,
+        "source_target_gff": target_gff,
+        "source_query_cds": query_cds,
+        "source_query_gff": query_gff,
+    }
+    for label, path in source_inputs.items():
+        assert summary["inputs"][label] == {
+            "path": str(path.resolve()),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }

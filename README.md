@@ -99,7 +99,8 @@ Other commands are `kffractbias formats` and `kffractbias version`.
 
 For a prefix such as `sorghum_maize`, kfFractBias writes:
 
-- `sorghum_maize.genes.tsv`: per-target-gene retention and matching query IDs
+- `sorghum_maize.genes.tsv`: retention and matching query IDs for each target
+  gene and query sequence combination
 - `sorghum_maize.windows.tsv`: sliding-window retention fractions and percent
 - `sorghum_maize.summary.json`: parameters, counts, input hashes, and outputs
 - `sorghum_maize.plot.pdf` and `.plot.png`: chromosome-wise profiles
@@ -113,7 +114,8 @@ the two denominator choices exposed by the original FractBias implementation.
 
 ```bash
 python -m pip install -e '.[test]'
-pytest
+python -m pytest
+python -m ruff check src tests
 ```
 
 ## Citation

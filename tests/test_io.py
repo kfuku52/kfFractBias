@@ -5,6 +5,7 @@ import pytest
 from kffractbias.io import (
     annotation_to_genes,
     parse_attributes,
+    read_bed,
     read_fasta_ids,
     read_synmap_pairs,
 )
@@ -60,10 +61,40 @@ def test_annotation_mapping_merges_cds_segments(tmp_path):
     assert mapping.genes[0].end == 12
 
 
+def test_annotation_mapping_stops_at_embedded_gff_fasta(tmp_path):
+    fasta = write(tmp_path / "genes.fa", ">tx1\nATG\n")
+    gff = write(
+        tmp_path / "genes.gff3",
+        "##gff-version 3\n"
+        "chr1\ttest\tmRNA\t1\t3\t.\t+\t.\tID=tx1\n"
+        "##FASTA\n"
+        ">chr1\n"
+        "ATG\n",
+    )
+    mapping = annotation_to_genes(gff, read_fasta_ids(fasta))
+    assert [gene.gene_id for gene in mapping.genes] == ["tx1"]
+
+
 def test_duplicate_fasta_identifiers_are_rejected(tmp_path):
     fasta = write(tmp_path / "genes.fa", ">tx1\nATG\n>tx1 duplicate\nATG\n")
     with pytest.raises(ValueError, match="Duplicate FASTA identifier"):
         read_fasta_ids(fasta)
+
+
+@pytest.mark.parametrize(
+    "record",
+    (
+        "chr1\t-1\t5\tt1\n",
+        "chr1\t5\t5\tt1\n",
+        "chr1\t10\t5\tt1\n",
+        "\t0\t5\tt1\n",
+        "chr1\t0\t5\t\n",
+    ),
+)
+def test_invalid_bed_records_are_rejected(tmp_path, record):
+    bed = write(tmp_path / "genes.bed", record)
+    with pytest.raises(ValueError, match="BED (interval|sequence identifier|gene identifier)"):
+        read_bed(bed)
 
 
 def test_synmap_parser_accepts_coge_numeric_identifiers(tmp_path):
@@ -73,4 +104,3 @@ def test_synmap_parser_accepts_coge_numeric_identifiers(tmp_path):
         "b2_chrA\tchrA||3||4||right_name||1||CDS||202||1||99\t3\t4\t1e-20\t10\n",
     )
     assert read_synmap_pairs(synmap, {"202"}, {"101"}) == (("202", "101"),)
-

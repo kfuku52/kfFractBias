@@ -106,6 +106,8 @@ def parse_attributes(value: str) -> dict[str, tuple[str, ...]]:
 def _iter_gff(path: str | Path) -> Iterator[tuple[str, str, int, int, str, dict[str, tuple[str, ...]]]]:
     with open_text(path) as handle:
         for line_number, line in enumerate(handle, start=1):
+            if line.startswith("##FASTA"):
+                break
             if not line.strip() or line.startswith("#"):
                 continue
             columns = line.rstrip("\n").split("\t")
@@ -218,6 +220,10 @@ def read_bed(path: str | Path) -> tuple[Gene, ...]:
             if len(columns) < 4:
                 raise ValueError(f"Expected at least 4 BED columns at {path}:{line_number}")
             gene_id = columns[3]
+            if not columns[0]:
+                raise ValueError(f"Empty BED sequence identifier at {path}:{line_number}")
+            if not gene_id:
+                raise ValueError(f"Empty BED gene identifier at {path}:{line_number}")
             if gene_id in seen:
                 raise ValueError(f"Duplicate BED identifier {gene_id!r} in {path}")
             seen.add(gene_id)
@@ -225,6 +231,8 @@ def read_bed(path: str | Path) -> tuple[Gene, ...]:
                 start, end = int(columns[1]), int(columns[2])
             except ValueError as exc:
                 raise ValueError(f"Invalid BED coordinates at {path}:{line_number}") from exc
+            if start < 0 or end <= start:
+                raise ValueError(f"Invalid BED interval at {path}:{line_number}")
             strand = columns[5] if len(columns) >= 6 else "."
             genes.append(Gene(columns[0], start, end, gene_id, strand))
     if not genes:
