@@ -11,7 +11,14 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .io import Gene, detect_synteny_format, natural_key, read_bed, read_synteny_pairs, sha256_file
+from .io import (
+    Gene,
+    detect_synteny_format,
+    natural_key,
+    read_bed,
+    read_synteny_pairs,
+    sha256_file,
+)
 
 
 @dataclass(frozen=True)
