@@ -3,7 +3,7 @@ message: >-
   Please cite the original FractBias publication when using kfFractBias.
 title: kfFractBias
 type: software
-version: 0.1.3
+version: 0.1.4
 license: MIT
 repository-code: https://github.com/kfuku52/kfFractBias
 preferred-citation:

@@ -284,7 +284,7 @@ def run_self_synteny(
     return SelfSyntenyRun(
         genome=genome,
         anchors_path=anchors_path,
-        commands=tuple((*commands, quota_command)),
+        commands=(*commands, quota_command),
         depth=depth,
         quota=quota,
         self_hit_percent=self_hit_percent,
