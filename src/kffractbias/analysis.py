@@ -34,6 +34,7 @@ class AnalysisConfig:
     window_size: int = 100
     step_size: int = 1
     denominator: str = "all"
+    analysis_mode: str = "pairwise_fractionation_bias"
     target_seqids: tuple[str, ...] = ()
     query_seqids: tuple[str, ...] = ()
     exclude_seqid_regex: str = ""
@@ -109,6 +110,8 @@ def _validate_config(config: AnalysisConfig) -> None:
         raise ValueError("step size must be at least 1")
     if config.denominator not in {"all", "syntenic"}:
         raise ValueError("denominator must be 'all' or 'syntenic'")
+    if config.analysis_mode not in {"pairwise_fractionation_bias", "self_synteny_retention"}:
+        raise ValueError("analysis mode must be 'pairwise_fractionation_bias' or 'self_synteny_retention'")
     if (
         not config.prefix
         or Path(config.prefix).name != config.prefix
@@ -135,15 +138,55 @@ def calculate_fractionation_bias(config: AnalysisConfig) -> AnalysisResult:
     resolved_synteny_format = (
         detect_synteny_format(config.synteny_path) if config.synteny_format == "auto" else config.synteny_format
     )
-    pairs = read_synteny_pairs(
+    input_pairs = read_synteny_pairs(
         config.synteny_path,
         resolved_synteny_format,
         set(target_by_id),
         set(query_by_id),
     )
 
+    pair_counts: dict[str, int] = {}
+    if config.analysis_mode == "self_synteny_retention":
+        target_coordinates = {
+            gene_id: (gene.seqid, gene.start, gene.end, gene.strand) for gene_id, gene in target_by_id.items()
+        }
+        query_coordinates = {
+            gene_id: (gene.seqid, gene.start, gene.end, gene.strand) for gene_id, gene in query_by_id.items()
+        }
+        if target_coordinates != query_coordinates:
+            raise ValueError("Self-synteny retention requires identical target and query BED gene sets and coordinates")
+        identity_pair_count = sum(target_id == query_id for target_id, query_id in input_pairs)
+        canonical_pairs = {
+            tuple(sorted((target_id, query_id)))
+            for target_id, query_id in input_pairs
+            if target_id != query_id
+        }
+        if not canonical_pairs:
+            raise ValueError("No non-identity self-synteny pairs remained after filtering")
+        nonidentity_pair_count = len(input_pairs) - identity_pair_count
+        mirrored_pair_count = nonidentity_pair_count - len(canonical_pairs)
+        pairs = tuple(sorted(canonical_pairs))
+        directed_pairs = tuple(
+            sorted((source, destination) for left, right in pairs for source, destination in ((left, right), (right, left)))
+        )
+        pair_counts = {
+            "input_synteny_pair_count": len(input_pairs),
+            "removed_identity_pair_count": identity_pair_count,
+            "removed_mirrored_pair_count": mirrored_pair_count,
+            "directed_synteny_pair_count": len(directed_pairs),
+            "intrachromosomal_pair_count": sum(
+                target_by_id[left].seqid == target_by_id[right].seqid for left, right in pairs
+            ),
+            "interchromosomal_pair_count": sum(
+                target_by_id[left].seqid != target_by_id[right].seqid for left, right in pairs
+            ),
+        }
+    else:
+        pairs = input_pairs
+        directed_pairs = pairs
+
     mappings: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
-    for target_id, query_id in pairs:
+    for target_id, query_id in directed_pairs:
         mappings[target_id][query_by_id[query_id].seqid].add(query_id)
 
     ordered_query_seqids = sorted({gene.seqid for gene in query_genes}, key=natural_key)
@@ -252,9 +295,10 @@ def calculate_fractionation_bias(config: AnalysisConfig) -> AnalysisResult:
         }
     )
     summary = {
-        "schema_version": 1,
+        "schema_version": 2,
         "program": "kfFractBias",
         "program_version": __version__,
+        "analysis_mode": config.analysis_mode,
         "target_name": config.target_name,
         "query_name": config.query_name,
         "parameters": {
@@ -274,6 +318,7 @@ def calculate_fractionation_bias(config: AnalysisConfig) -> AnalysisResult:
             "synteny_pair_count": len(pairs),
             "gene_table_row_count": len(gene_rows),
             "window_table_row_count": len(window_rows),
+            **pair_counts,
         },
         "inputs": inputs,
         "outputs": {

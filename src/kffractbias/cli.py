@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import __version__
 from .analysis import AnalysisConfig, calculate_fractionation_bias
-from .jcvi import prepare_genome, run_pairwise_synteny, validate_quota
+from .jcvi import prepare_genome, run_pairwise_synteny, run_self_synteny, validate_quota
 
 
 def _path(value: str) -> Path:
@@ -56,6 +56,16 @@ def _unit_interval(value: str) -> float:
     return parsed
 
 
+def _percent(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be greater than 0 and at most 100") from exc
+    if not 0 < parsed <= 100:
+        raise argparse.ArgumentTypeError("must be greater than 0 and at most 100")
+    return parsed
+
+
 def _regex(value: str) -> str:
     try:
         re.compile(value)
@@ -64,11 +74,14 @@ def _regex(value: str) -> str:
     return value
 
 
-def _add_output_options(parser: argparse.ArgumentParser) -> None:
+def _add_output_options(parser: argparse.ArgumentParser, *, self_comparison: bool = False) -> None:
     parser.add_argument("--output-dir", type=_output_path, default=Path.cwd(), help="Output directory")
     parser.add_argument("--prefix", type=_prefix, default="kffractbias", help="Output filename prefix")
-    parser.add_argument("--target-name", default="target", help="Target label used in metadata and plots")
-    parser.add_argument("--query-name", default="query", help="Query label used in metadata and plots")
+    if self_comparison:
+        parser.add_argument("--name", default="self", help="Genome label used in metadata and plots")
+    else:
+        parser.add_argument("--target-name", default="target", help="Target label used in metadata and plots")
+        parser.add_argument("--query-name", default="query", help="Query label used in metadata and plots")
     parser.add_argument("--window-size", type=_positive_int, default=100, help="Genes per sliding window (default: 100)")
     parser.add_argument("--step-size", type=_positive_int, default=1, help="Genes advanced per window (default: 1)")
     parser.add_argument(
@@ -77,8 +90,11 @@ def _add_output_options(parser: argparse.ArgumentParser) -> None:
         default="all",
         help="Use all target genes or only target genes with a syntenic match",
     )
-    parser.add_argument("--target-seqids", action="append", default=[], help="Comma-separated target sequences")
-    parser.add_argument("--query-seqids", action="append", default=[], help="Comma-separated query sequences")
+    if self_comparison:
+        parser.add_argument("--seqids", action="append", default=[], help="Comma-separated genome sequences")
+    else:
+        parser.add_argument("--target-seqids", action="append", default=[], help="Comma-separated target sequences")
+        parser.add_argument("--query-seqids", action="append", default=[], help="Comma-separated query sequences")
     parser.add_argument("--exclude-seqid-regex", type=_regex, default="", help="Regex for sequences to exclude")
     parser.add_argument("--no-plot", action="store_true", help="Do not create PDF and PNG plots")
 
@@ -97,6 +113,19 @@ def _add_annotation_options(parser: argparse.ArgumentParser) -> None:
         type=_unit_interval,
         default=0.5,
         help="Minimum fraction of CDS identifiers that must map to each GFF (default: 0.5)",
+    )
+
+
+def _add_self_annotation_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--cds", required=True, type=_path, help="Genome CDS FASTA")
+    parser.add_argument("--gff", required=True, type=_path, help="Genome GFF3/GTF")
+    parser.add_argument("--feature", help="GFF feature override, e.g. mRNA")
+    parser.add_argument("--attribute", help="GFF identifier attribute override, e.g. ID")
+    parser.add_argument(
+        "--minimum-mapping-fraction",
+        type=_unit_interval,
+        default=0.5,
+        help="Minimum fraction of CDS identifiers that must map to the GFF (default: 0.5)",
     )
 
 
@@ -132,6 +161,39 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--force", action="store_true", help="Replace an existing synteny work directory")
     _add_output_options(compare)
 
+    selfcompare = subparsers.add_parser(
+        "selfcompare",
+        help="Measure within-genome self-synteny retention",
+        description=(
+            "Generate non-redundant JCVI self-synteny, apply symmetric QUOTA-ALIGN screening, "
+            "and calculate within-genome retention profiles. This is not an outgroup-based fractionation analysis."
+        ),
+    )
+    _add_self_annotation_options(selfcompare)
+    selfcompare.add_argument(
+        "--depth",
+        required=True,
+        type=_positive_int,
+        help="Maximum expected homeologous block depth on each self-comparison axis",
+    )
+    selfcompare.add_argument("--cpus", type=_positive_int, default=1, help="Threads for sequence alignment")
+    selfcompare.add_argument("--cscore", type=_unit_interval, default=0.7, help="JCVI C-score cutoff")
+    selfcompare.add_argument("--aligner", choices=("last", "blast"), default="last")
+    selfcompare.add_argument(
+        "--self-hit-percent",
+        type=_percent,
+        default=98.0,
+        help="JCVI percent-identity cutoff used to remove near-self hits (default: 98)",
+    )
+    selfcompare.add_argument(
+        "--diagonal-bound",
+        type=_positive_int,
+        default=300,
+        help="Minimum gene-rank distance for intrachromosomal self-synteny blocks (default: 300)",
+    )
+    selfcompare.add_argument("--force", action="store_true", help="Replace an existing synteny work directory")
+    _add_output_options(selfcompare, self_comparison=True)
+
     validate = subparsers.add_parser(
         "validate",
         help="Validate CDS-to-GFF identifier mapping",
@@ -153,6 +215,7 @@ def _analysis_config(
     metadata=None,
     additional_inputs=None,
 ):
+    self_comparison = args.command == "selfcompare"
     return AnalysisConfig(
         synteny_path=synteny,
         synteny_format=args.format if hasattr(args, "format") else "jcvi",
@@ -160,13 +223,14 @@ def _analysis_config(
         query_bed=query_bed,
         output_dir=args.output_dir,
         prefix=args.prefix,
-        target_name=args.target_name,
-        query_name=args.query_name,
+        target_name=args.name if self_comparison else args.target_name,
+        query_name=args.name if self_comparison else args.query_name,
         window_size=args.window_size,
         step_size=args.step_size,
         denominator=args.denominator,
-        target_seqids=tuple(args.target_seqids),
-        query_seqids=tuple(args.query_seqids),
+        analysis_mode="self_synteny_retention" if self_comparison else "pairwise_fractionation_bias",
+        target_seqids=tuple(args.seqids if self_comparison else args.target_seqids),
+        query_seqids=tuple(args.seqids if self_comparison else args.query_seqids),
         exclude_seqid_regex=args.exclude_seqid_regex,
         make_plot=not args.no_plot,
         metadata=metadata or {},
@@ -200,8 +264,7 @@ def _check_feature_attribute_pairs(args: argparse.Namespace) -> None:
             raise ValueError(f"--{label}-feature and --{label}-attribute must be specified together")
 
 
-def command_compare(args: argparse.Namespace) -> int:
-    _check_feature_attribute_pairs(args)
+def _prepare_synteny_work_dir(args: argparse.Namespace) -> Path:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     work_dir = args.output_dir / f"{args.prefix}.synteny"
     if work_dir.exists():
@@ -210,6 +273,12 @@ def command_compare(args: argparse.Namespace) -> int:
         if work_dir == work_dir.parent or work_dir.name in {"", ".", ".."}:
             raise ValueError(f"Refusing to replace unsafe work directory: {work_dir}")
         shutil.rmtree(work_dir)
+    return work_dir
+
+
+def command_compare(args: argparse.Namespace) -> int:
+    _check_feature_attribute_pairs(args)
+    work_dir = _prepare_synteny_work_dir(args)
 
     synteny = run_pairwise_synteny(
         target_cds=args.target_cds,
@@ -258,6 +327,65 @@ def command_compare(args: argparse.Namespace) -> int:
                 "source_target_gff": args.target_gff,
                 "source_query_cds": args.query_cds,
                 "source_query_gff": args.query_gff,
+            },
+        )
+    )
+    _print_result(result)
+    return 0
+
+
+def command_selfcompare(args: argparse.Namespace) -> int:
+    if (args.feature is None) != (args.attribute is None):
+        raise ValueError("--feature and --attribute must be specified together")
+    work_dir = _prepare_synteny_work_dir(args)
+    synteny = run_self_synteny(
+        cds=args.cds,
+        gff=args.gff,
+        work_dir=work_dir,
+        depth=args.depth,
+        cpus=args.cpus,
+        cscore=args.cscore,
+        aligner=args.aligner,
+        feature=args.feature,
+        attribute=args.attribute,
+        minimum_mapping_fraction=args.minimum_mapping_fraction,
+        self_hit_percent=args.self_hit_percent,
+        intrachromosomal_diagonal_bound=args.diagonal_bound,
+    )
+    metadata = {
+        "interpretation": (
+            "Within-genome self-synteny retention asymmetry conditional on extant annotated genes; "
+            "not an outgroup-based fractionation-bias estimate."
+        ),
+        "synteny_generation": {
+            "method": "JCVI native self-synteny with symmetric QUOTA-ALIGN",
+            "depth": synteny.depth,
+            "quota": synteny.quota,
+            "commands": [list(command) for command in synteny.commands],
+            "identity_and_mirror_handling": {
+                "jcvi_native_self_mode": True,
+                "self_hit_percent": synteny.self_hit_percent,
+                "intrachromosomal_diagonal_bound_genes": synteny.intrachromosomal_diagonal_bound,
+                "symmetric_quota_screen": True,
+            },
+            "gff_mapping": {
+                "feature": synteny.genome.mapping.feature,
+                "attribute": synteny.genome.mapping.attribute,
+                "matched_gene_count": synteny.genome.mapping.matched_gene_count,
+                "fasta_gene_count": synteny.genome.mapping.fasta_gene_count,
+            },
+        },
+    }
+    result = calculate_fractionation_bias(
+        _analysis_config(
+            args,
+            synteny=synteny.anchors_path,
+            target_bed=synteny.genome.bed_path,
+            query_bed=synteny.genome.bed_path,
+            metadata=metadata,
+            additional_inputs={
+                "source_cds": args.cds,
+                "source_gff": args.gff,
             },
         )
     )
@@ -324,6 +452,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return command_calculate(args)
         if args.command == "compare":
             return command_compare(args)
+        if args.command == "selfcompare":
+            return command_selfcompare(args)
         if args.command == "validate":
             return command_validate(args)
         if args.command == "formats":

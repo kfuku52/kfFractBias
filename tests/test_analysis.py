@@ -141,3 +141,61 @@ def test_additional_inputs_are_hashed_in_summary(tmp_path):
         "path": str(source),
         "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
     }
+
+
+def test_self_synteny_removes_identity_and_mirrors_then_maps_both_directions(tmp_path):
+    bed = write(
+        tmp_path / "self.bed",
+        "chr1\t0\t10\tg1\n"
+        "chr1\t20\t30\tg2\n"
+        "chr2\t0\t10\tg3\n"
+        "chr2\t20\t30\tg4\n",
+    )
+    anchors = write(
+        tmp_path / "self.self.anchors",
+        "###\ng1\tg1\t100\ng1\tg3\t90\ng3\tg1\t90\n###\ng2\tg4\t80\n",
+    )
+    result = calculate_fractionation_bias(
+        AnalysisConfig(
+            synteny_path=anchors,
+            synteny_format="jcvi",
+            target_bed=bed,
+            query_bed=bed,
+            output_dir=tmp_path / "out",
+            analysis_mode="self_synteny_retention",
+            window_size=1,
+            make_plot=False,
+        )
+    )
+    retained_pairs = {
+        (row["target_gene"], row["query_genes"])
+        for row in result.gene_rows
+        if row["retained"] == 1
+    }
+    assert retained_pairs == {("g1", "g3"), ("g2", "g4"), ("g3", "g1"), ("g4", "g2")}
+    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+    assert summary["analysis_mode"] == "self_synteny_retention"
+    assert summary["counts"]["input_synteny_pair_count"] == 4
+    assert summary["counts"]["synteny_pair_count"] == 2
+    assert summary["counts"]["directed_synteny_pair_count"] == 4
+    assert summary["counts"]["removed_identity_pair_count"] == 1
+    assert summary["counts"]["removed_mirrored_pair_count"] == 1
+    assert summary["counts"]["interchromosomal_pair_count"] == 2
+
+
+def test_self_synteny_requires_identical_bed_coordinates(tmp_path):
+    target = write(tmp_path / "target.bed", "chr1\t0\t10\tg1\nchr2\t0\t10\tg2\n")
+    query = write(tmp_path / "query.bed", "chr1\t1\t10\tg1\nchr2\t0\t10\tg2\n")
+    anchors = write(tmp_path / "self.anchors", "g1\tg2\t10\n")
+    with pytest.raises(ValueError, match="identical target and query BED"):
+        calculate_fractionation_bias(
+            AnalysisConfig(
+                synteny_path=anchors,
+                synteny_format="jcvi",
+                target_bed=target,
+                query_bed=query,
+                output_dir=tmp_path / "out",
+                analysis_mode="self_synteny_retention",
+                make_plot=False,
+            )
+        )
