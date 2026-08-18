@@ -7,8 +7,8 @@ offline redesign of
 
 The original FractBias implementation was developed by Blake L. Joyce, Asher
 Haug-Baltzell, Sean Davey, Matthew Bomhoff, James C. Schnable, and Eric Lyons.
-The original Python 2 and notebook implementations remain under
-`Code_FractBias/` for provenance.
+This repository contains the maintained Python 3 implementation; the original
+Python 2 and notebook sources remain available in the Git history.
 
 ## What is different
 
