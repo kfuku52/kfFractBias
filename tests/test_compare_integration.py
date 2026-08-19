@@ -14,9 +14,14 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def gene_sequence(index: int) -> str:
+def gene_sequence(index: int, copy_index: int = 0) -> str:
     generator = random.Random(index + 1729)
-    return "ATG" + "".join(generator.choice("ACGT") for _ in range(300)) + "TAA"
+    sequence = list("ATG" + "".join(generator.choice("ACGT") for _ in range(300)) + "TAA")
+    for position in range(10 + copy_index, len(sequence) - 3, 20):
+        if copy_index:
+            alternatives = "ACGT".replace(sequence[position], "")
+            sequence[position] = alternatives[(index + position + copy_index) % len(alternatives)]
+    return "".join(sequence)
 
 
 def write_genome(tmp_path: Path, prefix: str, seqids: tuple[str, ...], copies: int):
@@ -28,9 +33,10 @@ def write_genome(tmp_path: Path, prefix: str, seqids: tuple[str, ...], copies: i
         seqid = seqids[copy_index]
         for gene_index in range(8):
             gene_id = f"{prefix}{copy_index + 1}_{gene_index + 1}"
-            fasta_lines.extend((f">{gene_id}", gene_sequence(gene_index)))
+            sequence = gene_sequence(gene_index, copy_index)
+            fasta_lines.extend((f">{gene_id}", sequence))
             start = gene_index * 1000 + 1
-            end = start + len(gene_sequence(gene_index)) - 1
+            end = start + len(sequence) - 1
             gff_lines.append(f"{seqid}\ttest\tmRNA\t{start}\t{end}\t.\t+\t.\tID={gene_id}")
     fasta_path.write_text("\n".join(fasta_lines) + "\n", encoding="utf-8")
     gff_path.write_text("\n".join(gff_lines) + "\n", encoding="utf-8")
