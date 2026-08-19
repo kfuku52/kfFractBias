@@ -28,21 +28,32 @@ network access.
 
 ## Installation
 
+Python 3.11 or newer is required.
+
 ```bash
-python -m pip install .
+python -m pip install '.[plot]'
 kffractbias version
 ```
 
-The `compare` command requires JCVI and one of its supported local aligners.
-The default `last` aligner requires `lastal` and `lastdb`. JCVI QUOTA-ALIGN
-also requires its mixed-integer solver dependency.
+The base installation has no third-party runtime dependencies and supports
+`calculate --no-plot`, `validate`, `formats`, and `version`. Use `.[plot]` for
+plots or `.[compare]` for plots plus the end-to-end JCVI commands. For a fully
+locked environment, install [uv](https://docs.astral.sh/uv/) and run
+`uv sync --locked --extra all`.
+
+The `compare` extra includes JCVI, but its default `last` aligner also requires
+the external `lastal` and `lastdb` executables. JCVI QUOTA-ALIGN requires its
+mixed-integer solver dependency.
 
 ## Commands
 
 ### Calculate from precomputed synteny
 
 `calculate` accepts a JCVI `.anchors` file or SynMap/DAGCHAINER output. The
-target and query BED identifiers must match the synteny identifiers.
+target and query BED identifiers must match the synteny identifiers. BED
+coordinates use the standard zero-based, half-open convention. Target and
+query gene identifier sets must be disjoint for pairwise analysis so pair
+orientation cannot be guessed incorrectly.
 
 ```bash
 kffractbias calculate \
@@ -82,6 +93,11 @@ kffractbias compare \
 The quota is always explicit: `1:2` means one expected target region for two
 expected query regions. Reversing target and query also requires reversing the
 quota.
+
+CDS-to-GFF mapping is strict by default: every FASTA identifier must map to the
+selected GFF feature and attribute. If incomplete mapping is intentional, set
+`--minimum-mapping-fraction` explicitly; the matched and total counts are
+recorded in the summary.
 
 ### Compare a genome to itself
 
@@ -126,6 +142,11 @@ kffractbias validate \
 Use `--target-feature` with `--target-attribute`, and the corresponding query
 options, when automatic GFF identifier detection is not appropriate.
 
+Every non-comment synteny row is validated. A malformed row or a row that does
+not contain one target and one query identifier stops the analysis with its
+line number instead of being silently discarded. Duplicate valid pairs are
+deduplicated and counted in the summary.
+
 Other commands are `kffractbias formats` and `kffractbias version`.
 
 ## Outputs
@@ -147,13 +168,33 @@ interpretation limitation in the JSON summary.
 syntenic` first removes target genes without any retained query match, matching
 the two denominator choices exposed by the original FractBias implementation.
 
+By default, output tables include only query sequences represented by retained
+synteny pairs. This avoids a target-gene by every-query-contig cross product on
+fragmented assemblies. Use `--include-unmatched-query-seqids` when explicit
+zero-retention profiles for every selected query sequence are required.
+
+The summary schema records input and output SHA-256 hashes, input and selected
+gene counts, synteny record and duplicate counts, Python/platform/package
+versions, and JCVI/aligner versions when available. Inputs are hashed before
+analysis and verified again before output commit. Outputs for one prefix are
+staged together, protected by a per-prefix lock, and replace prior outputs only
+after all calculation and plotting steps succeed.
+
+A small current-format example is available in [`examples/minimal`](examples/minimal).
+
 ## Development
 
 ```bash
-python -m pip install -e '.[test]'
-python -m pytest
-python -m ruff check src tests
+uv sync --locked --extra test --extra plot
+uv run --no-sync python -m pytest
+uv run --no-sync ruff check src tests
+uv run --no-sync ruff format --check src tests
+uv run --no-sync mypy src
 ```
+
+The opt-in pairwise and self-synteny JCVI/LAST integration tests run in CI and can be run locally with
+`KFFRACTBIAS_RUN_INTEGRATION=1 uv run --extra all pytest tests/test_compare_integration.py`.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full checklist.
 
 ## Citation
 
@@ -166,4 +207,4 @@ If you use kfFractBias, cite the original FractBias publication:
 
 ## License
 
-MIT. The original copyright and license are retained in `MIT License`.
+MIT. The original copyright and license are retained in [`LICENSE`](LICENSE).

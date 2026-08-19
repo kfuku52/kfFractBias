@@ -7,6 +7,7 @@ from kffractbias.io import (
     parse_attributes,
     read_bed,
     read_fasta_ids,
+    read_jcvi_pairs,
     read_synmap_pairs,
 )
 
@@ -65,11 +66,7 @@ def test_annotation_mapping_stops_at_embedded_gff_fasta(tmp_path):
     fasta = write(tmp_path / "genes.fa", ">tx1\nATG\n")
     gff = write(
         tmp_path / "genes.gff3",
-        "##gff-version 3\n"
-        "chr1\ttest\tmRNA\t1\t3\t.\t+\t.\tID=tx1\n"
-        "##FASTA\n"
-        ">chr1\n"
-        "ATG\n",
+        "##gff-version 3\nchr1\ttest\tmRNA\t1\t3\t.\t+\t.\tID=tx1\n##FASTA\n>chr1\nATG\n",
     )
     mapping = annotation_to_genes(gff, read_fasta_ids(fasta))
     assert [gene.gene_id for gene in mapping.genes] == ["tx1"]
@@ -104,3 +101,22 @@ def test_synmap_parser_accepts_coge_numeric_identifiers(tmp_path):
         "b2_chrA\tchrA||3||4||right_name||1||CDS||202||1||99\t3\t4\t1e-20\t10\n",
     )
     assert read_synmap_pairs(synmap, {"202"}, {"101"}) == (("202", "101"),)
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    (
+        ("only-one-column\n", "Expected at least 2 JCVI columns"),
+        ("unknown\tq1\t10\n", "does not match one target and one query"),
+    ),
+)
+def test_jcvi_parser_rejects_every_invalid_data_row(tmp_path, text, message):
+    anchors = write(tmp_path / "pairs.anchors", f"t1\tq1\t10\n{text}")
+    with pytest.raises(ValueError, match=message):
+        read_jcvi_pairs(anchors, {"t1"}, {"q1"})
+
+
+def test_jcvi_parser_rejects_ambiguous_orientation(tmp_path):
+    anchors = write(tmp_path / "pairs.anchors", "g1\tg2\t10\n")
+    with pytest.raises(ValueError, match="Ambiguous JCVI pair orientation"):
+        read_jcvi_pairs(anchors, {"g1", "g2"}, {"g1", "g2"})

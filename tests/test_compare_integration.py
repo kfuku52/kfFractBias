@@ -31,9 +31,7 @@ def write_genome(tmp_path: Path, prefix: str, seqids: tuple[str, ...], copies: i
             fasta_lines.extend((f">{gene_id}", gene_sequence(gene_index)))
             start = gene_index * 1000 + 1
             end = start + len(gene_sequence(gene_index)) - 1
-            gff_lines.append(
-                f"{seqid}\ttest\tmRNA\t{start}\t{end}\t.\t+\t.\tID={gene_id}"
-            )
+            gff_lines.append(f"{seqid}\ttest\tmRNA\t{start}\t{end}\t.\t+\t.\tID={gene_id}")
     fasta_path.write_text("\n".join(fasta_lines) + "\n", encoding="utf-8")
     gff_path.write_text("\n".join(gff_lines) + "\n", encoding="utf-8")
     return fasta_path, gff_path
@@ -83,3 +81,32 @@ def test_compare_runs_jcvi_quota_align_offline(tmp_path):
             "path": str(path.resolve()),
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         }
+
+
+def test_selfcompare_runs_jcvi_quota_align_offline(tmp_path):
+    cds, gff = write_genome(tmp_path, "s", ("self_a", "self_b"), 2)
+    output_dir = tmp_path / "self-output"
+    status = main(
+        [
+            "selfcompare",
+            "--cds",
+            str(cds),
+            "--gff",
+            str(gff),
+            "--depth",
+            "1",
+            "--window-size",
+            "4",
+            "--output-dir",
+            str(output_dir),
+            "--prefix",
+            "synthetic-self",
+            "--no-plot",
+        ]
+    )
+    assert status == 0
+    assert (output_dir / "synthetic-self.synteny" / "self.self.lifted.1x1.anchors").is_file()
+    summary = json.loads((output_dir / "synthetic-self.summary.json").read_text(encoding="utf-8"))
+    assert summary["analysis_mode"] == "self_synteny_retention"
+    assert summary["counts"]["synteny_pair_count"] > 0
+    assert summary["metadata"]["synteny_generation"]["tool_versions"]["jcvi"]

@@ -2,11 +2,19 @@ name: tests
 
 on:
   push:
+    branches: [master]
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
+
+env:
+  UV_VERSION: "0.12.3"
 
 jobs:
   unit:
@@ -15,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - name: Check out repository
@@ -25,13 +33,77 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
 
-      - name: Install package and test tools
-        run: python -m pip install --upgrade ".[test]"
+      - name: Install locked test environment
+        run: |
+          python -m pip install "uv==${UV_VERSION}"
+          uv sync --locked --extra test --extra plot
 
       - name: Run unit tests
-        run: python -m pytest -q
+        run: uv run --no-sync python -m pytest -q
+
+  quality:
+    name: Static and package checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install locked quality environment
+        run: |
+          python -m pip install "uv==${UV_VERSION}"
+          uv sync --locked --extra test --extra plot
 
       - name: Run static checks
-        run: python -m ruff check src tests
+        run: |
+          uv run --no-sync ruff check src tests
+          uv run --no-sync ruff format --check src tests
+          uv run --no-sync mypy src
+
+      - name: Verify test coverage
+        run: |
+          uv run --no-sync coverage run -m pytest -q
+          uv run --no-sync coverage report
+
+      - name: Build package
+        run: uv run --no-sync python -m build
+
+  integration:
+    name: JCVI/LAST integration
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install LAST
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes last-align
+
+      - name: Install locked integration environment
+        run: |
+          python -m pip install "uv==${UV_VERSION}"
+          uv sync --locked --extra test --extra all
+
+      - name: Run JCVI/LAST integration test
+        env:
+          KFFRACTBIAS_RUN_INTEGRATION: "1"
+        run: uv run --no-sync python -m pytest -q tests/test_compare_integration.py
+
+      - name: Audit locked integration environment
+        # JCVI -> genomepy declares diskcache 5.6.3. The advisory has no fixed
+        # release and requires an attacker to already have cache-directory
+        # write access; kfFractBias does not import or use diskcache.
+        run: uv run --no-sync pip-audit --local --skip-editable --ignore-vuln PYSEC-2026-2447

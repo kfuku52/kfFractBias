@@ -15,7 +15,14 @@ def write(path: Path, text: str) -> Path:
 def test_public_subcommand_names_have_no_hyphens():
     parser = build_parser()
     subparsers = next(action for action in parser._actions if action.dest == "command")
-    assert set(subparsers.choices) == {"calculate", "compare", "selfcompare", "validate", "formats", "version"}
+    assert set(subparsers.choices) == {
+        "calculate",
+        "compare",
+        "selfcompare",
+        "validate",
+        "formats",
+        "version",
+    }
     assert all("-" not in command for command in subparsers.choices)
 
 

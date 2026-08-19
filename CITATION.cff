@@ -3,6 +3,19 @@ message: >-
   Please cite the original FractBias publication when using kfFractBias.
 title: kfFractBias
 type: software
+authors:
+  - family-names: Joyce
+    given-names: Blake L.
+  - family-names: Haug-Baltzell
+    given-names: Asher
+  - family-names: Davey
+    given-names: Sean
+  - family-names: Bomhoff
+    given-names: Matthew
+  - family-names: Schnable
+    given-names: James C.
+  - family-names: Lyons
+    given-names: Eric
 version: 0.1.4
 license: MIT
 repository-code: https://github.com/kfuku52/kfFractBias
