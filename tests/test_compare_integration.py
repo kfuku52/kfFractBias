@@ -101,6 +101,8 @@ def test_selfcompare_runs_jcvi_quota_align_offline(tmp_path):
             str(gff),
             "--depth",
             "1",
+            "--intrachromosomal-diagonal-bound",
+            "1",
             "--window-size",
             "4",
             "--output-dir",
