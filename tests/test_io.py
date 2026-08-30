@@ -1,3 +1,4 @@
+import gzip
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from kffractbias.io import (
     read_jcvi_pairs,
     read_synmap_pairs,
 )
+from kffractbias.jcvi import prepare_genome
 
 
 def write(path: Path, text: str) -> Path:
@@ -60,6 +62,7 @@ def test_annotation_mapping_merges_cds_segments(tmp_path):
     assert mapping.attribute == "Parent"
     assert mapping.genes[0].start == 0
     assert mapping.genes[0].end == 12
+    assert mapping.unresolved_locus_count == 1
 
 
 def test_annotation_mapping_stops_at_embedded_gff_fasta(tmp_path):
@@ -120,3 +123,70 @@ def test_jcvi_parser_rejects_ambiguous_orientation(tmp_path):
     anchors = write(tmp_path / "pairs.anchors", "g1\tg2\t10\n")
     with pytest.raises(ValueError, match="Ambiguous JCVI pair orientation"):
         read_jcvi_pairs(anchors, {"g1", "g2"}, {"g1", "g2"})
+
+
+@pytest.mark.parametrize(
+    "text,line,message",
+    [
+        (">\nATG\n", 1, "Empty FASTA identifier"),
+        (">   \nATG\n", 1, "Empty FASTA identifier"),
+        ("ATG\n>x\nATG\n", 1, "before first FASTA header"),
+        (">x\n>y\nATG\n", 1, "Empty FASTA sequence"),
+        (">x\n", 1, "Empty FASTA sequence"),
+        (">x\nATX\n", 2, "Invalid nucleotide"),
+    ],
+)
+def test_malformed_fasta_has_path_and_line(tmp_path, text, line, message):
+    fasta = write(tmp_path / "invalid.fa", text)
+    with pytest.raises(ValueError, match=message) as caught:
+        read_fasta_ids(fasta)
+    assert f"{fasta}:{line}" in str(caught.value)
+
+
+def test_wrapped_compressed_iupac_fasta(tmp_path):
+    fasta = tmp_path / "cds.fa.gz"
+    with gzip.open(fasta, "wt") as handle:
+        handle.write(">a description\nacgt\n nryswkmbdhvu\n\n>b\nATG\n")
+    assert read_fasta_ids(fasta) == {"a", "b"}
+
+
+@pytest.mark.parametrize("format", ["gff", "gtf", "cds"])
+def test_isoform_policies_and_mapping_counts(tmp_path, format):
+    fasta = write(tmp_path / "cds.fa", ">t1\nATG\n>t2\nATGATG\n>t3\nATGATG\n>t4\nATGATG\n")
+    lines = []
+    for i in range(1, 5):
+        locus = "g1" if i <= 2 else "g2"
+        if format == "gtf":
+            lines.append(
+                f'chr1\ttest\ttranscript\t{i * 10}\t{i * 10 + 5}\t.\t+\t.\tgene_id "{locus}"; transcript_id "t{i}";\n'
+            )
+        else:
+            lines.append(
+                f"chr1\ttest\tmRNA\t{i * 10}\t{i * 10 + 5}\t.\t+\t.\tID=t{i};Parent={locus}\n"
+            )
+            if format == "cds":
+                lines.append(f"chr1\ttest\tCDS\t{i * 10}\t{i * 10 + 5}\t.\t+\t0\tParent=t{i}\n")
+    gff = write(tmp_path / "genes.gff", "".join(lines))
+    overrides = {"feature": "CDS", "attribute": "Parent"} if format == "cds" else {}
+    with pytest.raises(ValueError, match="Multiple CDS isoforms"):
+        prepare_genome("x", fasta, gff, tmp_path, **overrides)
+    longest = prepare_genome("x", fasta, gff, tmp_path, isoform_policy="longest", **overrides)
+    assert [g.gene_id for g in longest.mapping.genes] == ["t2", "t3"]
+    assert read_fasta_ids(longest.cds_path) == {"t2", "t3"}
+    assert longest.mapping.matched_gene_count == 4
+    assert longest.mapping.collapsed_isoform_count == 2
+    assert longest.mapping.metadata()["selected_gene_count"] == 2
+    all_isoforms = prepare_genome("y", fasta, gff, tmp_path, isoform_policy="all", **overrides)
+    assert len(all_isoforms.mapping.genes) == 4
+    assert all_isoforms.mapping.metadata()["counting_unit"] == "mapped_identifier"
+    # A representative-only FASTA remains accepted without changing its IDs.
+    fasta.write_text(">t2\nATGATG\n>t3\nATGATG\n")
+    representatives = prepare_genome("z", fasta, gff, tmp_path, **overrides)
+    assert [g.gene_id for g in representatives.mapping.genes] == ["t2", "t3"]
+
+
+def test_ambiguous_locus_is_rejected(tmp_path):
+    fasta = write(tmp_path / "cds.fa", ">t1\nATG\n")
+    gff = write(tmp_path / "genes.gff", "chr1\tt\tmRNA\t1\t3\t.\t+\t.\tID=t1;Parent=g1,g2\n")
+    with pytest.raises(ValueError, match="multiple gene loci"):
+        prepare_genome("x", fasta, gff, tmp_path)

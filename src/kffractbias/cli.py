@@ -2,20 +2,28 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
-import secrets
-import shutil
 import sys
 import tempfile
-from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .analysis import AnalysisConfig, AnalysisResult, calculate_fractionation_bias
-from .jcvi import prepare_genome, run_pairwise_synteny, run_self_synteny, validate_quota
+from .analysis import (
+    AnalysisConfig,
+    AnalysisResult,
+    calculate_fractionation_bias,
+    preflight_analysis,
+)
+from .jcvi import (
+    PreparedGenome,
+    prepare_genome,
+    run_pairwise_synteny,
+    run_self_synteny,
+    validate_quota,
+)
+from .run import RunContext, analysis_run
 
 
 def _path(value: str) -> Path:
@@ -131,9 +139,24 @@ def _add_output_options(parser: argparse.ArgumentParser, *, self_comparison: boo
         help="Include query sequences without retained synteny pairs in output tables",
     )
     parser.add_argument("--no-plot", action="store_true", help="Do not create PDF and PNG plots")
+    parser.add_argument(
+        "--keep-failed-work",
+        action="store_true",
+        help="Retain this run's private staging directory and logs on failure",
+    )
+
+
+def _add_isoform_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--isoform-policy",
+        choices=("error", "longest", "all"),
+        default="error",
+        help="Multiple CDS per gene locus: reject (default), select longest CDS, or count all identifiers",
+    )
 
 
 def _add_annotation_options(parser: argparse.ArgumentParser) -> None:
+    _add_isoform_option(parser)
     parser.add_argument("--target-cds", required=True, type=_path, help="Target CDS FASTA")
     parser.add_argument("--target-gff", required=True, type=_path, help="Target GFF3/GTF")
     parser.add_argument("--query-cds", required=True, type=_path, help="Query CDS FASTA")
@@ -155,6 +178,7 @@ def _add_annotation_options(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_self_annotation_options(parser: argparse.ArgumentParser) -> None:
+    _add_isoform_option(parser)
     parser.add_argument("--cds", required=True, type=_path, help="Genome CDS FASTA")
     parser.add_argument("--gff", required=True, type=_path, help="Genome GFF3/GTF")
     parser.add_argument("--feature", help="GFF feature override, e.g. mRNA")
@@ -190,6 +214,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--query-bed", required=True, type=_path, help="Query gene-coordinate BED"
     )
     calculate.add_argument("--format", choices=("auto", "jcvi", "synmap"), default="auto")
+    calculate.add_argument(
+        "--self",
+        action="store_true",
+        help="Reuse self-synteny anchors with identical BEDs; report within-genome retention",
+    )
     _add_output_options(calculate)
 
     compare = subparsers.add_parser(
@@ -206,6 +235,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     compare.add_argument("--cscore", type=_unit_interval, default=0.7, help="JCVI C-score cutoff")
     compare.add_argument("--aligner", choices=("last", "blast"), default="last")
+    compare.add_argument(
+        "--blast-task",
+        choices=("blastn", "dc-megablast", "megablast"),
+        help="BLAST+ search task; requires --aligner blast (default: blastn)",
+    )
     compare.add_argument(
         "--force", action="store_true", help="Replace an existing synteny work directory"
     )
@@ -233,6 +267,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--cscore", type=_unit_interval, default=0.7, help="JCVI C-score cutoff"
     )
     selfcompare.add_argument("--aligner", choices=("last", "blast"), default="last")
+    selfcompare.add_argument(
+        "--blast-task",
+        choices=("blastn", "dc-megablast", "megablast"),
+        help="BLAST+ search task; requires --aligner blast (default: blastn)",
+    )
     selfcompare.add_argument(
         "--self-hit-percent",
         type=_percent,
@@ -285,13 +324,15 @@ def _analysis_config(
         step_size=args.step_size,
         denominator=args.denominator,
         analysis_mode="self_synteny_retention"
-        if self_comparison
+        if self_comparison or getattr(args, "self", False)
         else "pairwise_fractionation_bias",
         target_seqids=tuple(args.seqids if self_comparison else args.target_seqids),
         query_seqids=tuple(args.seqids if self_comparison else args.query_seqids),
         exclude_seqid_regex=args.exclude_seqid_regex,
         include_unmatched_query_seqids=args.include_unmatched_query_seqids,
         make_plot=not args.no_plot,
+        collect_rows=False,
+        keep_failed_work=args.keep_failed_work,
         metadata=metadata or {},
         additional_inputs=additional_inputs or {},
     )
@@ -327,99 +368,91 @@ def _check_feature_attribute_pairs(args: argparse.Namespace) -> None:
             )
 
 
-def _is_within(path: Path, directory: Path) -> bool:
-    try:
-        path.relative_to(directory)
-    except ValueError:
-        return False
-    return True
+def _before_alignment(
+    args: argparse.Namespace, run: RunContext
+) -> Callable[[PreparedGenome, PreparedGenome], None]:
+    def check(target: PreparedGenome, query: PreparedGenome) -> None:
+        with run.stage("preflight"):
+            run.capture_inputs(
+                {
+                    "target_bed": target.bed_path,
+                    "query_bed": query.bed_path,
+                    "prepared_target_cds": target.cds_path,
+                    "prepared_query_cds": query.cds_path,
+                }
+            )
+            run.verify_inputs()
+            config = _analysis_config(
+                args,
+                synteny=run.work_dir / "pending.anchors",
+                target_bed=target.bed_path,
+                query_bed=query.bed_path,
+            )
+            estimates = preflight_analysis(config, target.mapping.genes, query.mapping.genes)
+            if config.make_plot:
+                from .plotting import preflight_plot
 
+                preflight_plot()
+            (run.work_dir / "preflight.json").write_text(
+                json.dumps(estimates, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            print(
+                f"kffractbias: dense output upper bound: {estimates['gene_table_rows_upper_bound']:,} gene rows, {estimates['window_table_rows_upper_bound']:,} window rows",
+                file=sys.stderr,
+            )
 
-@contextmanager
-def _synteny_work_dir(args: argparse.Namespace, input_paths: Sequence[Path]) -> Iterator[Path]:
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    work_dir = args.output_dir / f"{args.prefix}.synteny"
-    _validate_synteny_work_dir(work_dir, input_paths)
-    backup_dir = _backup_synteny_work_dir(work_dir, force=args.force)
-    try:
-        yield work_dir
-    except BaseException:
-        if work_dir.exists():
-            shutil.rmtree(work_dir)
-        if backup_dir is not None:
-            os.replace(backup_dir, work_dir)
-        raise
-    else:
-        if backup_dir is not None:
-            shutil.rmtree(backup_dir)
-
-
-def _validate_synteny_work_dir(work_dir: Path, input_paths: Sequence[Path]) -> None:
-    if work_dir.is_symlink():
-        raise ValueError(f"Refusing to replace symlinked synteny work directory: {work_dir}")
-    resolved_work_dir = work_dir.resolve()
-    dangerous_inputs = [
-        path.resolve() for path in input_paths if _is_within(path.resolve(), resolved_work_dir)
-    ]
-    if dangerous_inputs:
-        formatted = ", ".join(str(path) for path in dangerous_inputs)
-        raise ValueError(
-            f"Input files must not be located inside the replaceable synteny work directory: {formatted}"
-        )
-
-
-def _backup_synteny_work_dir(work_dir: Path, *, force: bool) -> Path | None:
-    if not work_dir.exists():
-        return None
-    if not force:
-        raise ValueError(
-            f"Synteny work directory already exists: {work_dir}; use --force to replace it"
-        )
-    if not work_dir.is_dir() or work_dir == work_dir.parent or work_dir.name in {"", ".", ".."}:
-        raise ValueError(f"Refusing to replace unsafe work directory: {work_dir}")
-    backup_dir = work_dir.with_name(f".{work_dir.name}.backup-{os.getpid()}-{secrets.token_hex(4)}")
-    os.replace(work_dir, backup_dir)
-    return backup_dir
+    return check
 
 
 def command_compare(args: argparse.Namespace) -> int:
     _check_feature_attribute_pairs(args)
-    source_inputs = (args.target_cds, args.target_gff, args.query_cds, args.query_gff)
-    with _synteny_work_dir(args, source_inputs) as work_dir:
-        synteny = run_pairwise_synteny(
-            target_cds=args.target_cds,
-            target_gff=args.target_gff,
-            query_cds=args.query_cds,
-            query_gff=args.query_gff,
-            work_dir=work_dir,
-            quota=args.quota,
-            cpus=args.cpus,
-            cscore=args.cscore,
-            aligner=args.aligner,
-            target_feature=args.target_feature,
-            target_attribute=args.target_attribute,
-            query_feature=args.query_feature,
-            query_attribute=args.query_attribute,
-            minimum_mapping_fraction=args.minimum_mapping_fraction,
-        )
+    if args.blast_task is not None and args.aligner != "blast":
+        raise ValueError("--blast-task requires --aligner blast")
+    source_inputs = {
+        "source_target_cds": args.target_cds,
+        "source_target_gff": args.target_gff,
+        "source_query_cds": args.query_cds,
+        "source_query_gff": args.query_gff,
+    }
+    with analysis_run(
+        args.output_dir,
+        args.prefix,
+        source_inputs,
+        synteny=True,
+        force=args.force,
+        keep_failed_work=args.keep_failed_work,
+    ) as run:
+        frozen = run.capture_inputs(source_inputs)
+        with run.stage("synteny"):
+            synteny = run_pairwise_synteny(
+                target_cds=frozen["source_target_cds"],
+                target_gff=frozen["source_target_gff"],
+                query_cds=frozen["source_query_cds"],
+                query_gff=frozen["source_query_gff"],
+                work_dir=run.work_dir,
+                quota=args.quota,
+                cpus=args.cpus,
+                cscore=args.cscore,
+                aligner=args.aligner,
+                target_feature=args.target_feature,
+                target_attribute=args.target_attribute,
+                query_feature=args.query_feature,
+                query_attribute=args.query_attribute,
+                minimum_mapping_fraction=args.minimum_mapping_fraction,
+                isoform_policy=args.isoform_policy,
+                before_alignment=_before_alignment(args, run),
+                blast_task=args.blast_task or "blastn",
+            )
         metadata = {
             "synteny_generation": {
                 "method": "JCVI MCscan with QUOTA-ALIGN",
                 "quota": synteny.quota,
                 "command": list(synteny.command),
+                "commands": [list(command) for command in synteny.commands],
+                "blast_task": synteny.blast_task,
                 "tool_versions": synteny.tool_versions,
-                "target_gff_mapping": {
-                    "feature": synteny.target.mapping.feature,
-                    "attribute": synteny.target.mapping.attribute,
-                    "matched_gene_count": synteny.target.mapping.matched_gene_count,
-                    "fasta_gene_count": synteny.target.mapping.fasta_gene_count,
-                },
-                "query_gff_mapping": {
-                    "feature": synteny.query.mapping.feature,
-                    "attribute": synteny.query.mapping.attribute,
-                    "matched_gene_count": synteny.query.mapping.matched_gene_count,
-                    "fasta_gene_count": synteny.query.mapping.fasta_gene_count,
-                },
+                "target_gff_mapping": synteny.target.mapping.metadata(),
+                "query_gff_mapping": synteny.query.mapping.metadata(),
             }
         }
         result = calculate_fractionation_bias(
@@ -435,7 +468,8 @@ def command_compare(args: argparse.Namespace) -> int:
                     "source_query_cds": args.query_cds,
                     "source_query_gff": args.query_gff,
                 },
-            )
+            ),
+            run=run,
         )
     _print_result(result)
     return 0
@@ -444,44 +478,57 @@ def command_compare(args: argparse.Namespace) -> int:
 def command_selfcompare(args: argparse.Namespace) -> int:
     if (args.feature is None) != (args.attribute is None):
         raise ValueError("--feature and --attribute must be specified together")
-    with _synteny_work_dir(args, (args.cds, args.gff)) as work_dir:
-        synteny = run_self_synteny(
-            cds=args.cds,
-            gff=args.gff,
-            work_dir=work_dir,
-            depth=args.depth,
-            cpus=args.cpus,
-            cscore=args.cscore,
-            aligner=args.aligner,
-            feature=args.feature,
-            attribute=args.attribute,
-            minimum_mapping_fraction=args.minimum_mapping_fraction,
-            self_hit_percent=args.self_hit_percent,
-            intrachromosomal_diagonal_bound=args.diagonal_bound,
-        )
+    if args.blast_task is not None and args.aligner != "blast":
+        raise ValueError("--blast-task requires --aligner blast")
+    source_inputs = {"source_cds": args.cds, "source_gff": args.gff}
+    with analysis_run(
+        args.output_dir,
+        args.prefix,
+        source_inputs,
+        synteny=True,
+        force=args.force,
+        keep_failed_work=args.keep_failed_work,
+    ) as run:
+        frozen = run.capture_inputs(source_inputs)
+        with run.stage("synteny"):
+            synteny = run_self_synteny(
+                cds=frozen["source_cds"],
+                gff=frozen["source_gff"],
+                work_dir=run.work_dir,
+                depth=args.depth,
+                cpus=args.cpus,
+                cscore=args.cscore,
+                aligner=args.aligner,
+                feature=args.feature,
+                attribute=args.attribute,
+                minimum_mapping_fraction=args.minimum_mapping_fraction,
+                isoform_policy=args.isoform_policy,
+                self_hit_percent=args.self_hit_percent,
+                intrachromosomal_diagonal_bound=args.diagonal_bound,
+                before_alignment=_before_alignment(args, run),
+                blast_task=args.blast_task or "blastn",
+            )
         metadata = {
             "interpretation": (
                 "Within-genome self-synteny retention asymmetry conditional on extant annotated genes; "
                 "not an outgroup-based fractionation-bias estimate."
             ),
             "synteny_generation": {
-                "method": "JCVI native self-synteny with symmetric QUOTA-ALIGN",
+                "method": "JCVI chromosome-aware self-synteny with shared-genome QUOTA-ALIGN",
                 "depth": synteny.depth,
                 "quota": synteny.quota,
                 "commands": [list(command) for command in synteny.commands],
+                "blast_task": synteny.blast_task,
                 "tool_versions": synteny.tool_versions,
                 "identity_and_mirror_handling": {
                     "jcvi_native_self_mode": True,
+                    "chromosome_aware_scan": True,
+                    "shared_genome_quota_constraints": True,
                     "self_hit_percent": synteny.self_hit_percent,
                     "intrachromosomal_diagonal_bound_genes": synteny.intrachromosomal_diagonal_bound,
                     "symmetric_quota_screen": True,
                 },
-                "gff_mapping": {
-                    "feature": synteny.genome.mapping.feature,
-                    "attribute": synteny.genome.mapping.attribute,
-                    "matched_gene_count": synteny.genome.mapping.matched_gene_count,
-                    "fasta_gene_count": synteny.genome.mapping.fasta_gene_count,
-                },
+                "gff_mapping": synteny.genome.mapping.metadata(),
             },
         }
         result = calculate_fractionation_bias(
@@ -495,7 +542,8 @@ def command_selfcompare(args: argparse.Namespace) -> int:
                     "source_cds": args.cds,
                     "source_gff": args.gff,
                 },
-            )
+            ),
+            run=run,
         )
     _print_result(result)
     return 0
@@ -512,6 +560,7 @@ def command_validate(args: argparse.Namespace) -> int:
             feature=args.target_feature,
             attribute=args.target_attribute,
             minimum_mapping_fraction=args.minimum_mapping_fraction,
+            isoform_policy=args.isoform_policy,
         )
         query = prepare_genome(
             "query",
@@ -521,22 +570,13 @@ def command_validate(args: argparse.Namespace) -> int:
             feature=args.query_feature,
             attribute=args.query_attribute,
             minimum_mapping_fraction=args.minimum_mapping_fraction,
+            isoform_policy=args.isoform_policy,
         )
     print(
         json.dumps(
             {
-                "target": {
-                    "feature": target.mapping.feature,
-                    "attribute": target.mapping.attribute,
-                    "matched_gene_count": target.mapping.matched_gene_count,
-                    "fasta_gene_count": target.mapping.fasta_gene_count,
-                },
-                "query": {
-                    "feature": query.mapping.feature,
-                    "attribute": query.mapping.attribute,
-                    "matched_gene_count": query.mapping.matched_gene_count,
-                    "fasta_gene_count": query.mapping.fasta_gene_count,
-                },
+                "target": target.mapping.metadata(),
+                "query": query.mapping.metadata(),
             },
             indent=2,
             sort_keys=True,

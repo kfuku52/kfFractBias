@@ -1,12 +1,15 @@
+import csv
 import hashlib
 import json
 import os
 import random
+import shutil
 from pathlib import Path
 
 import pytest
 
 from kffractbias.cli import main
+from kffractbias.io import parse_synteny_pairs, read_bed
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KFFRACTBIAS_RUN_INTEGRATION") != "1",
@@ -43,13 +46,22 @@ def write_genome(tmp_path: Path, prefix: str, seqids: tuple[str, ...], copies: i
     return fasta_path, gff_path
 
 
-def test_compare_runs_jcvi_quota_align_offline(tmp_path):
+@pytest.fixture(params=["last", "blast"])
+def aligner(request):
+    if request.param == "blast" and shutil.which("blastn") is None:
+        pytest.skip("install BLAST+ to test the optional BLAST aligner")
+    return request.param
+
+
+def test_compare_runs_jcvi_quota_align_offline(tmp_path, aligner):
     target_cds, target_gff = write_genome(tmp_path, "t", ("target_chr",), 1)
     query_cds, query_gff = write_genome(tmp_path, "q", ("query_a", "query_b"), 2)
     output_dir = tmp_path / "output"
     status = main(
         [
             "compare",
+            "--aligner",
+            aligner,
             "--target-cds",
             str(target_cds),
             "--target-gff",
@@ -76,6 +88,23 @@ def test_compare_runs_jcvi_quota_align_offline(tmp_path):
     assert (output_dir / "synthetic.plot.pdf").is_file()
     assert (output_dir / "synthetic.plot.png").is_file()
     summary = json.loads((output_dir / "synthetic.summary.json").read_text(encoding="utf-8"))
+    expected = {(f"t1_{i}", f"q{copy}_{i}") for i in range(1, 9) for copy in (1, 2)}
+    assert (
+        set(
+            parse_synteny_pairs(
+                output_dir / "synthetic.synteny" / "target.query.lifted.1x2.anchors",
+                "jcvi",
+                {left for left, _ in expected},
+                {right for _, right in expected},
+            ).pairs
+        )
+        == expected
+    )
+    assert summary["counts"]["synteny_pair_count"] == 16
+    with (output_dir / "synthetic.windows.tsv").open() as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    assert len(rows) == 10
+    assert all(row["retained_count"] == "4" and row["retention_fraction"] == "1" for row in rows)
     source_inputs = {
         "source_target_cds": target_cds,
         "source_target_gff": target_gff,
@@ -87,21 +116,38 @@ def test_compare_runs_jcvi_quota_align_offline(tmp_path):
             "path": str(path.resolve()),
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         }
+    for label in (
+        "target_bed",
+        "query_bed",
+        "prepared_target_cds",
+        "prepared_query_cds",
+        "synteny",
+    ):
+        path = Path(summary["inputs"][label]["path"])
+        assert path.is_file()
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == summary["inputs"][label]["sha256"]
+    assert (output_dir / "synthetic.synteny" / "preflight.json").is_file()
+    assert len(list((output_dir / "synthetic.synteny" / "logs").glob("*.json"))) == (
+        3 if aligner == "blast" else 1
+    )
+    assert summary["metadata"]["synteny_generation"]["blast_task"] == (
+        "blastn" if aligner == "blast" else None
+    )
 
 
-def test_selfcompare_runs_jcvi_quota_align_offline(tmp_path):
+def test_selfcompare_runs_jcvi_quota_align_offline(tmp_path, aligner):
     cds, gff = write_genome(tmp_path, "s", ("self_a", "self_b"), 2)
     output_dir = tmp_path / "self-output"
     status = main(
         [
             "selfcompare",
+            "--aligner",
+            aligner,
             "--cds",
             str(cds),
             "--gff",
             str(gff),
             "--depth",
-            "1",
-            "--diagonal-bound",
             "1",
             "--window-size",
             "4",
@@ -116,5 +162,118 @@ def test_selfcompare_runs_jcvi_quota_align_offline(tmp_path):
     assert (output_dir / "synthetic-self.synteny" / "self.self.lifted.1x1.anchors").is_file()
     summary = json.loads((output_dir / "synthetic-self.summary.json").read_text(encoding="utf-8"))
     assert summary["analysis_mode"] == "self_synteny_retention"
-    assert summary["counts"]["synteny_pair_count"] > 0
+    assert summary["counts"]["synteny_pair_count"] == 8
+    assert summary["counts"]["interchromosomal_pair_count"] == 8
+    assert summary["counts"]["intrachromosomal_pair_count"] == 0
     assert summary["metadata"]["synteny_generation"]["tool_versions"]["jcvi"]
+    expected = {(f"s1_{i}", f"s2_{i}") for i in range(1, 9)}
+    identifiers = {gene for pair in expected for gene in pair}
+    assert (
+        set(
+            parse_synteny_pairs(
+                output_dir / "synthetic-self.synteny" / "self.self.lifted.1x1.anchors",
+                "jcvi",
+                identifiers,
+                identifiers,
+                allow_ambiguous_orientation=True,
+            ).pairs
+        )
+        == expected
+    )
+    with (output_dir / "synthetic-self.windows.tsv").open() as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    assert len(rows) == 20
+    assert all(
+        row["retention_percent"] == ("0" if row["target_seqid"] == row["query_seqid"] else "100")
+        for row in rows
+    )
+
+
+def test_default_self_bound_preserves_both_blocks_with_padding(tmp_path):
+    fasta, gff = tmp_path / "genome.fa", tmp_path / "genome.gff"
+    records, annotation = [], []
+    layout = [
+        ("chrA", "a", 0, 0, 8),
+        ("chrB", "b", 0, 1, 8),
+        ("chrC", "c", 100, 0, 8),
+        ("chrD_padding", "pad", 1000, 0, 320),
+        ("chrE", "e", 100, 1, 8),
+    ]
+    for chrom, prefix, offset, copy, count in layout:
+        for index in range(count):
+            identifier = f"{prefix}{index}"
+            sequence = gene_sequence(offset + index, copy)
+            records.append(f">{identifier}\n{sequence}\n")
+            annotation.append(
+                f"{chrom}\ttest\tmRNA\t{index * 1000 + 1}\t{index * 1000 + len(sequence)}\t.\t+\t.\tID={identifier}\n"
+            )
+    fasta.write_text("".join(records))
+    gff.write_text("".join(reversed(annotation)))
+    output = tmp_path / "out"
+    assert (
+        main(
+            [
+                "selfcompare",
+                "--cds",
+                str(fasta),
+                "--gff",
+                str(gff),
+                "--depth",
+                "1",
+                "--window-size",
+                "4",
+                "--output-dir",
+                str(output),
+                "--no-plot",
+            ]
+        )
+        == 0
+    )
+    work = output / "kffractbias.synteny"
+    identifiers = {gene.gene_id for gene in read_bed(work / "self.bed")}
+    pairs = parse_synteny_pairs(
+        work / "self.self.lifted.1x1.anchors",
+        "jcvi",
+        identifiers,
+        identifiers,
+        allow_ambiguous_orientation=True,
+    ).pairs
+    assert set(pairs) == {
+        (f"{left}{i}", f"{right}{i}") for left, right in (("a", "b"), ("c", "e")) for i in range(8)
+    }
+
+
+@pytest.mark.parametrize("depth,expected_count", [(1, 8), (2, 24)])
+def test_real_self_quota_on_three_chromosomes(tmp_path, depth, expected_count):
+    cds, gff = write_genome(tmp_path, "s", ("A", "B", "C"), 3)
+    output = tmp_path / "out"
+    assert (
+        main(
+            [
+                "selfcompare",
+                "--cds",
+                str(cds),
+                "--gff",
+                str(gff),
+                "--depth",
+                str(depth),
+                "--window-size",
+                "4",
+                "--output-dir",
+                str(output),
+                "--no-plot",
+            ]
+        )
+        == 0
+    )
+    work = output / "kffractbias.synteny"
+    identifiers = {gene.gene_id for gene in read_bed(work / "self.bed")}
+    pairs = parse_synteny_pairs(
+        work / f"self.self.lifted.{depth}x{depth}.anchors",
+        "jcvi",
+        identifiers,
+        identifiers,
+        allow_ambiguous_orientation=True,
+    ).pairs
+    assert len(pairs) == expected_count
+    assert all(sum(gene in pair for pair in pairs) <= depth for gene in identifiers)

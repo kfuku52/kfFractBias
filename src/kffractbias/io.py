@@ -6,7 +6,7 @@ import re
 from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TextIO
 from urllib.parse import unquote
@@ -28,6 +28,29 @@ class AnnotationMapping:
     genes: tuple[Gene, ...]
     fasta_gene_count: int
     matched_gene_count: int
+    locus_by_id: dict[str, str] = field(default_factory=dict)
+    isoform_policy: str = "error"
+    collapsed_isoform_count: int = 0
+    unresolved_locus_count: int = 0
+
+    def metadata(self) -> dict[str, str | int]:
+        return {
+            "feature": self.feature,
+            "attribute": self.attribute,
+            "fasta_gene_count": self.fasta_gene_count,
+            "matched_gene_count": self.matched_gene_count,
+            "selected_gene_count": len(self.genes),
+            "isoform_policy": self.isoform_policy,
+            "collapsed_isoform_count": self.collapsed_isoform_count,
+            "unresolved_locus_count": self.unresolved_locus_count,
+            "counting_unit": "mapped_identifier"
+            if self.isoform_policy == "all"
+            else (
+                "representative_per_known_locus"
+                if self.unresolved_locus_count
+                else "representative_per_locus"
+            ),
+        }
 
 
 @dataclass(frozen=True)
@@ -62,9 +85,10 @@ def open_text(path: str | Path) -> Iterator[TextIO]:
 
 
 def natural_key(value: str) -> tuple[object, ...]:
-    return tuple(
-        int(token) if token.isdigit() else token.lower() for token in re.split(r"(\d+)", value)
+    parts = tuple(
+        int(token) if token.isdecimal() else token.lower() for token in re.split(r"(\d+)", value)
     )
+    return parts, value
 
 
 def sha256_file(path: str | Path) -> str:
@@ -75,33 +99,99 @@ def sha256_file(path: str | Path) -> str:
     return digest.hexdigest()
 
 
-def read_fasta_ids(path: str | Path) -> set[str]:
+def iter_fasta(path: str | Path) -> Iterator[tuple[str, str, str]]:
+    """Validate nucleotide FASTA while retaining at most one sequence record."""
     identifiers: set[str] = set()
+    identifier = header = ""
+    header_line = 0
+    sequence: list[str] = []
     with open_text(path) as handle:
-        for line in handle:
-            if not line.startswith(">"):
+        for line_number, line in enumerate(handle, 1):
+            if not line.strip():
                 continue
-            identifier = line[1:].strip().split(None, 1)[0]
-            if not identifier:
-                raise ValueError(f"Empty FASTA identifier in {path}")
-            if identifier in identifiers:
-                raise ValueError(f"Duplicate FASTA identifier {identifier!r} in {path}")
-            identifiers.add(identifier)
+            if line.startswith(">"):
+                if identifier:
+                    if not sequence:
+                        raise ValueError(
+                            f"Empty FASTA sequence for {identifier!r} at {path}:{header_line}"
+                        )
+                    yield identifier, header, "".join(sequence)
+                header = line[1:].strip()
+                if not header:
+                    raise ValueError(f"Empty FASTA identifier at {path}:{line_number}")
+                identifier = header.split(None, 1)[0]
+                if identifier in identifiers:
+                    raise ValueError(
+                        f"Duplicate FASTA identifier {identifier!r} at {path}:{line_number}"
+                    )
+                identifiers.add(identifier)
+                header_line = line_number
+                sequence = []
+            else:
+                if not identifier:
+                    raise ValueError(f"Sequence before first FASTA header at {path}:{line_number}")
+                bases = "".join(line.split())
+                if re.search(r"[^ACGTURYSWKMBDHVNacgturyswkmbdhvn]", bases):
+                    raise ValueError(f"Invalid nucleotide FASTA sequence at {path}:{line_number}")
+                sequence.append(bases)
     if not identifiers:
         raise ValueError(f"No FASTA records found in {path}")
-    return identifiers
+    if not sequence:
+        raise ValueError(f"Empty FASTA sequence for {identifier!r} at {path}:{header_line}")
+    yield identifier, header, "".join(sequence)
+
+
+def read_fasta_ids(path: str | Path) -> set[str]:
+    return {identifier for identifier, _header, _sequence in iter_fasta(path)}
+
+
+def select_isoforms(
+    mapping: AnnotationMapping, lengths: dict[str, int], policy: str
+) -> AnnotationMapping:
+    if policy not in {"error", "longest", "all"}:
+        raise ValueError("isoform policy must be 'error', 'longest', or 'all'")
+    loci: dict[str, list[Gene]] = defaultdict(list)
+    for gene in mapping.genes:
+        loci[mapping.locus_by_id.get(gene.gene_id, gene.gene_id)].append(gene)
+    duplicated = {locus: genes for locus, genes in loci.items() if len(genes) > 1}
+    if duplicated and policy == "error":
+        examples = ", ".join(sorted(duplicated, key=natural_key)[:5])
+        raise ValueError(
+            f"Multiple CDS isoforms map to {len(duplicated)} gene loci ({examples}); use --isoform-policy longest to select one CDS per locus, or all to count identifiers separately"
+        )
+    selected = mapping.genes
+    if policy == "longest":
+        for locus, genes in duplicated.items():
+            if (
+                len({gene.seqid for gene in genes}) > 1
+                or len({gene.strand for gene in genes} - {"."}) > 1
+            ):
+                raise ValueError(
+                    f"Isoforms of locus {locus!r} occur on incompatible sequences or strands"
+                )
+        ids = {
+            min(genes, key=lambda gene: (-lengths[gene.gene_id], natural_key(gene.gene_id))).gene_id
+            for genes in loci.values()
+        }
+        selected = tuple(gene for gene in selected if gene.gene_id in ids)
+    return replace(
+        mapping,
+        genes=selected,
+        isoform_policy=policy,
+        collapsed_isoform_count=len(mapping.genes) - len(selected),
+    )
 
 
 def parse_attributes(value: str) -> dict[str, tuple[str, ...]]:
     parsed: dict[str, list[str]] = defaultdict(list)
-    for field in value.strip().strip(";").split(";"):
-        field = field.strip()
-        if not field:
+    for attribute_field in value.strip().strip(";").split(";"):
+        attribute_field = attribute_field.strip()
+        if not attribute_field:
             continue
-        if "=" in field:
-            key, raw = field.split("=", 1)
+        if "=" in attribute_field:
+            key, raw = attribute_field.split("=", 1)
         else:
-            match = re.match(r"([^\s]+)\s+[\"']?(.*?)[\"']?$", field)
+            match = re.match(r"([^\s]+)\s+[\"']?(.*?)[\"']?$", attribute_field)
             if not match:
                 continue
             key, raw = match.groups()
@@ -215,6 +305,65 @@ def _mapped_gff_intervals(
     )
 
 
+def _annotation_loci(
+    gff_path: str | Path, feature: str, attribute: str, selected: set[str]
+) -> tuple[dict[str, str], int]:
+    parents: dict[str, set[str]] = defaultdict(set)
+    candidates: dict[str, set[str]] = defaultdict(set)
+    known_loci: set[str] = set()
+    for _seqid, row_feature, _start, _end, _strand, attrs in _iter_gff(gff_path):
+        row_ids = set(attrs.get("ID", ())) | set(attrs.get("transcript_id", ()))
+        ancestors = set(attrs.get("gene_id", ())) or set(attrs.get("Parent", ()))
+        known_loci.update(attrs.get("gene_id", ()))
+        if row_feature == "gene":
+            known_loci.update(row_ids)
+        elif row_feature in {"mRNA", "transcript"}:
+            known_loci.update(ancestors)
+        if row_feature != "gene":
+            for identifier in row_ids:
+                parents[identifier].update(ancestors - {identifier})
+        if row_feature != feature:
+            continue
+        for identifier in set(attrs.get(attribute, ())) & selected:
+            if row_feature == "gene":
+                candidates[identifier].update(
+                    attrs.get("ID", ()) or attrs.get("gene_id", ()) or (identifier,)
+                )
+                known_loci.update(candidates[identifier])
+            elif attribute == "Parent" and not attrs.get("gene_id"):
+                # A shared CDS segment can name several transcripts. Resolve
+                # each mapped transcript separately, not all of its siblings.
+                candidates[identifier].add(identifier)
+            else:
+                candidates[identifier].update(ancestors)
+
+    def roots(identifier: str, seen: frozenset[str] = frozenset()) -> set[str]:
+        if identifier in seen:
+            raise ValueError(f"Cyclic GFF parent relationship for {identifier!r} in {gff_path}")
+        if not parents.get(identifier):
+            return {identifier}
+        return set().union(*(roots(parent, seen | {identifier}) for parent in parents[identifier]))
+
+    loci: dict[str, str] = {}
+    unresolved = 0
+    for identifier in sorted(selected, key=natural_key):
+        ancestors = candidates.get(identifier, set())
+        if not ancestors:
+            unresolved += 1
+            loci[identifier] = identifier
+            continue
+        resolved = set().union(*(roots(parent) for parent in ancestors))
+        if len(resolved) != 1:
+            raise ValueError(
+                f"GFF identifier {identifier!r} maps to multiple gene loci: {', '.join(sorted(resolved))}"
+            )
+        locus = next(iter(resolved))
+        loci[identifier] = locus
+        if locus not in known_loci:
+            unresolved += 1
+    return loci, unresolved
+
+
 def annotation_to_genes(
     gff_path: str | Path,
     fasta_ids: set[str],
@@ -239,12 +388,17 @@ def annotation_to_genes(
         selected_attribute,
         selected_matches,
     )
+    loci, unresolved = _annotation_loci(
+        gff_path, selected_feature, selected_attribute, selected_matches
+    )
     return AnnotationMapping(
         feature=selected_feature,
         attribute=selected_attribute,
         genes=genes,
         fasta_gene_count=len(fasta_ids),
         matched_gene_count=len(genes),
+        locus_by_id=loci,
+        unresolved_locus_count=unresolved,
     )
 
 

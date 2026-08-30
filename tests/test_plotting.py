@@ -85,3 +85,31 @@ def test_plot_failure_preserves_previous_outputs(tmp_path: Path, monkeypatch) ->
 
     assert original.genes_path.read_bytes() == previous_genes
     assert original.summary_path.read_bytes() == previous_summary
+
+
+def test_many_sequences_are_paginated_without_losing_panels(tmp_path):
+    pytest.importorskip("matplotlib")
+    import re
+
+    import matplotlib.pyplot as plt
+
+    from kffractbias.io import Gene
+    from kffractbias.plotting import plot_windows
+    from kffractbias.profiles import RetentionProfile
+
+    profile = RetentionProfile(
+        {f"t{i}": [Gene(f"t{i}", 0, 3, f"gene{i}")] for i in range(8)},
+        [f"q{i}" for i in range(13)],
+        {},
+        1,
+        1,
+    )
+    pdf, png = tmp_path / "plot.pdf", tmp_path / "plot.png"
+    metadata = plot_windows(
+        profile.window_rows(), pdf, png, target_name="target", query_name="query", window_size=1
+    )
+    assert metadata["panels"] == 16
+    assert metadata["pdf_pages"] == 3
+    assert len(re.findall(rb"/Type /Page\b", pdf.read_bytes())) == 3
+    assert png.stat().st_size > 0
+    assert not plt.get_fignums()

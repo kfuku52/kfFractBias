@@ -1,23 +1,21 @@
 from __future__ import annotations
 
 import csv
-import fcntl
 import json
-import os
 import platform
 import re
 import sys
-import tempfile
 from collections import defaultdict
-from collections.abc import Iterable, Iterator
-from contextlib import contextmanager
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from . import __version__
 from .io import Gene, detect_synteny_format, natural_key, parse_synteny_pairs, read_bed, sha256_file
+from .profiles import GENE_FIELDS, WINDOW_FIELDS, GeneRow, RetentionProfile, WindowRow
+from .run import RunContext, analysis_run, output_paths, validate_prefix, validate_separation
 
 
 @dataclass(frozen=True)
@@ -39,6 +37,8 @@ class AnalysisConfig:
     exclude_seqid_regex: str = ""
     include_unmatched_query_seqids: bool = False
     make_plot: bool = True
+    collect_rows: bool = True
+    keep_failed_work: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
     additional_inputs: dict[str, Path] = field(default_factory=dict)
 
@@ -50,15 +50,25 @@ class AnalysisResult:
     summary_path: Path
     pdf_path: Path | None
     png_path: Path | None
-    gene_rows: tuple[dict[str, Any], ...]
-    window_rows: tuple[dict[str, Any], ...]
+    gene_rows: tuple[GeneRow, ...]
+    window_rows: tuple[WindowRow, ...]
 
 
-def _write_rows(path: Path, fieldnames: list[str], rows: Iterable[dict[str, Any]]) -> None:
+Row = TypeVar("Row", bound=Mapping[str, object])
+
+
+def _write_rows(
+    path: Path, fieldnames: tuple[str, ...], rows: Iterable[Row], *, collect: bool
+) -> tuple[Row, ...]:
+    collected: list[Row] = []
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter="\t", lineterminator="\n")
-        writer.writeheader()
-        writer.writerows(rows)
+        writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
+        writer.writerow(fieldnames)
+        for row in rows:
+            writer.writerow([row[field] for field in fieldnames])
+            if collect:
+                collected.append(row)
+    return tuple(collected)
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
@@ -113,13 +123,7 @@ def _validate_config(config: AnalysisConfig) -> None:
         raise ValueError(
             "analysis mode must be 'pairwise_fractionation_bias' or 'self_synteny_retention'"
         )
-    if (
-        not config.prefix
-        or Path(config.prefix).name != config.prefix
-        or config.prefix in {".", ".."}
-        or any(ord(character) < 32 or ord(character) == 127 for character in config.prefix)
-    ):
-        raise ValueError("prefix must be a non-empty filename component")
+    validate_prefix(config.prefix)
     reserved_inputs = {"synteny", "target_bed", "query_bed"}
     conflicts = reserved_inputs.intersection(config.additional_inputs)
     if conflicts:
@@ -138,104 +142,6 @@ def _input_paths(config: AnalysisConfig) -> dict[str, Path]:
     return paths
 
 
-def _output_paths(config: AnalysisConfig) -> dict[str, Path]:
-    output_dir = Path(config.output_dir).resolve()
-    return {
-        "genes": output_dir / f"{config.prefix}.genes.tsv",
-        "windows": output_dir / f"{config.prefix}.windows.tsv",
-        "summary": output_dir / f"{config.prefix}.summary.json",
-        "plot_pdf": output_dir / f"{config.prefix}.plot.pdf",
-        "plot_png": output_dir / f"{config.prefix}.plot.png",
-        "lock": output_dir / f".{config.prefix}.lock",
-    }
-
-
-def _paths_refer_to_same_file(left: Path, right: Path) -> bool:
-    if left.resolve() == right.resolve():
-        return True
-    try:
-        return left.samefile(right)
-    except (FileNotFoundError, OSError):
-        return False
-
-
-def _validate_input_output_separation(inputs: dict[str, Path], outputs: dict[str, Path]) -> None:
-    for input_label, input_path in inputs.items():
-        for output_label, output_path in outputs.items():
-            if _paths_refer_to_same_file(input_path, output_path):
-                raise ValueError(
-                    f"Input {input_label!r} and output {output_label!r} refer to the same path: {input_path}"
-                )
-
-
-def _snapshot_inputs(inputs: dict[str, Path]) -> dict[str, dict[str, str]]:
-    return {
-        label: {"path": str(path), "sha256": sha256_file(path)} for label, path in inputs.items()
-    }
-
-
-def _verify_input_snapshots(inputs: dict[str, Path], snapshots: dict[str, dict[str, str]]) -> None:
-    changed: list[str] = []
-    for label, path in inputs.items():
-        try:
-            current_hash = sha256_file(path)
-        except OSError:
-            changed.append(label)
-            continue
-        if current_hash != snapshots[label]["sha256"]:
-            changed.append(label)
-    if changed:
-        raise RuntimeError(f"Input files changed during analysis: {', '.join(changed)}")
-
-
-@contextmanager
-def _exclusive_output_lock(lock_path: Path) -> Iterator[None]:
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+", encoding="utf-8") as handle:
-        try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise RuntimeError(
-                f"Another analysis is writing the same output prefix: {lock_path}"
-            ) from exc
-        handle.seek(0)
-        handle.truncate()
-        handle.write(f"pid={os.getpid()}\n")
-        handle.flush()
-        try:
-            yield
-        finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-
-
-def _remove_file(path: Path) -> None:
-    if path.exists() or path.is_symlink():
-        path.unlink()
-
-
-def _commit_outputs(staged: dict[Path, Path | None], staging_dir: Path) -> None:
-    backups: dict[Path, Path] = {}
-    installed: list[Path] = []
-    for final_path in staged:
-        if final_path.exists() and final_path.is_dir():
-            raise ValueError(f"Output path is an existing directory: {final_path}")
-    try:
-        for index, (final_path, staged_path) in enumerate(staged.items()):
-            if final_path.exists() or final_path.is_symlink():
-                backup_path = staging_dir / f"backup-{index}-{final_path.name}"
-                os.replace(final_path, backup_path)
-                backups[final_path] = backup_path
-            if staged_path is not None:
-                os.replace(staged_path, final_path)
-                installed.append(final_path)
-    except BaseException:
-        for final_path in installed:
-            _remove_file(final_path)
-        for final_path, backup_path in backups.items():
-            os.replace(backup_path, final_path)
-        raise
-
-
 def _runtime_metadata() -> dict[str, Any]:
     packages: dict[str, str | None] = {}
     for distribution in ("kffractbias", "jcvi", "matplotlib", "ortools"):
@@ -248,63 +154,6 @@ def _runtime_metadata() -> dict[str, Any]:
         "platform": platform.platform(),
         "packages": packages,
     }
-
-
-def _build_rows(
-    target_by_seqid: dict[str, list[Gene]],
-    ordered_query_seqids: list[str],
-    mappings: dict[str, dict[str, set[str]]],
-    window_size: int,
-    step_size: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    gene_rows: list[dict[str, Any]] = []
-    window_rows: list[dict[str, Any]] = []
-    for target_seqid in sorted(target_by_seqid, key=natural_key):
-        genes = target_by_seqid[target_seqid]
-        for rank, gene in enumerate(genes, start=1):
-            for query_seqid in ordered_query_seqids:
-                query_gene_ids = sorted(
-                    mappings[gene.gene_id].get(query_seqid, ()), key=natural_key
-                )
-                gene_rows.append(
-                    {
-                        "target_seqid": target_seqid,
-                        "target_gene": gene.gene_id,
-                        "target_rank": rank,
-                        "query_seqid": query_seqid,
-                        "retained": int(bool(query_gene_ids)),
-                        "query_genes": ";".join(query_gene_ids),
-                    }
-                )
-
-        if len(genes) < window_size:
-            continue
-        for query_seqid in ordered_query_seqids:
-            cumulative = [0]
-            for gene in genes:
-                cumulative.append(
-                    cumulative[-1] + int(bool(mappings[gene.gene_id].get(query_seqid)))
-                )
-            for start_index in range(0, len(genes) - window_size + 1, step_size):
-                end_index = start_index + window_size
-                retained_count = cumulative[end_index] - cumulative[start_index]
-                fraction = retained_count / window_size
-                window_rows.append(
-                    {
-                        "target_seqid": target_seqid,
-                        "query_seqid": query_seqid,
-                        "window_index": start_index // step_size + 1,
-                        "start_rank": start_index + 1,
-                        "end_rank": end_index,
-                        "start_gene": genes[start_index].gene_id,
-                        "end_gene": genes[end_index - 1].gene_id,
-                        "retained_count": retained_count,
-                        "window_size": window_size,
-                        "retention_fraction": f"{fraction:.10g}",
-                        "retention_percent": f"{fraction * 100:.10g}",
-                    }
-                )
-    return gene_rows, window_rows
 
 
 def _validate_pairwise_identifiers(
@@ -391,16 +240,65 @@ def _prepare_directed_pairs(
     return pairs, directed_pairs, pair_counts
 
 
-def calculate_fractionation_bias(config: AnalysisConfig) -> AnalysisResult:
+def preflight_analysis(
+    config: AnalysisConfig, target_genes: tuple[Gene, ...], query_genes: tuple[Gene, ...]
+) -> dict[str, int]:
+    """Validate selectors and estimate dense output before expensive alignment."""
+    _validate_config(config)
+    target = _filter_genes(target_genes, config.target_seqids, config.exclude_seqid_regex, "target")
+    query = _filter_genes(query_genes, config.query_seqids, config.exclude_seqid_regex, "query")
+    _validate_pairwise_identifiers(
+        config.analysis_mode,
+        {g.gene_id: g for g in target_genes},
+        {g.gene_id: g for g in query_genes},
+    )
+    grouped: dict[str, list[Gene]] = defaultdict(list)
+    for gene in target:
+        grouped[gene.seqid].append(gene)
+    profile = RetentionProfile(
+        grouped,
+        sorted({g.seqid for g in query}, key=natural_key),
+        {},
+        config.window_size,
+        config.step_size,
+    )
+    genes, windows = profile.row_counts()
+    return {"gene_table_rows_upper_bound": genes, "window_table_rows_upper_bound": windows}
+
+
+def calculate_fractionation_bias(
+    config: AnalysisConfig, *, run: RunContext | None = None
+) -> AnalysisResult:
     _validate_config(config)
     inputs = _input_paths(config)
-    outputs = _output_paths(config)
-    _validate_input_output_separation(inputs, outputs)
+    outputs = output_paths(config.output_dir, config.prefix)
+    validate_separation(inputs, outputs)
+    if run is None:
+        with analysis_run(
+            config.output_dir, config.prefix, inputs, keep_failed_work=config.keep_failed_work
+        ) as owned_run:
+            return calculate_fractionation_bias(config, run=owned_run)
+    run.require_active(config.output_dir, config.prefix)
+    inputs = run.capture_inputs(inputs)
+    if config.make_plot:
+        from .plotting import preflight_plot
 
-    with _exclusive_output_lock(outputs["lock"]):
-        input_snapshots = _snapshot_inputs(inputs)
-        all_target_genes = read_bed(config.target_bed)
-        all_query_genes = read_bed(config.query_bed)
+        preflight_plot()
+    return _calculate(config, run, inputs, outputs)
+
+
+def _calculate(
+    config: AnalysisConfig, run: RunContext, inputs: dict[str, Path], outputs: dict[str, Path]
+) -> AnalysisResult:
+    metadata = dict(config.metadata)
+    if config.analysis_mode == "self_synteny_retention":
+        metadata.setdefault(
+            "interpretation",
+            "Within-genome self-synteny retention conditional on extant annotated genes; not an outgroup-based fractionation-bias estimate.",
+        )
+    with run.stage("parse_and_prepare_profile"):
+        all_target_genes = read_bed(inputs["target_bed"])
+        all_query_genes = read_bed(inputs["query_bed"])
         target_genes = _filter_genes(
             all_target_genes,
             config.target_seqids,
@@ -420,12 +318,12 @@ def calculate_fractionation_bias(config: AnalysisConfig) -> AnalysisResult:
         _validate_pairwise_identifiers(config.analysis_mode, all_target_by_id, all_query_by_id)
 
         resolved_synteny_format = (
-            detect_synteny_format(config.synteny_path)
+            detect_synteny_format(inputs["synteny"])
             if config.synteny_format == "auto"
             else config.synteny_format
         )
         parsed_synteny = parse_synteny_pairs(
-            config.synteny_path,
+            inputs["synteny"],
             resolved_synteny_format,
             set(all_target_by_id),
             set(all_query_by_id),
@@ -465,143 +363,110 @@ def calculate_fractionation_bias(config: AnalysisConfig) -> AnalysisResult:
                 continue
             target_by_seqid[gene.seqid].append(gene)
 
-        gene_rows, window_rows = _build_rows(
-            target_by_seqid,
-            ordered_query_seqids,
-            mappings,
-            config.window_size,
-            config.step_size,
+        profile = RetentionProfile(
+            target_by_seqid, ordered_query_seqids, mappings, config.window_size, config.step_size
+        )
+    gene_count, window_count = profile.row_counts()
+    staging_dir = run.staging_dir
+    staged_genes = staging_dir / outputs["genes"].name
+    staged_windows = staging_dir / outputs["windows"].name
+    staged_summary = staging_dir / outputs["summary"].name
+    staged_pdf = staging_dir / outputs["plot_pdf"].name
+    staged_png = staging_dir / outputs["plot_png"].name
+    with run.stage("tables"):
+        gene_rows = _write_rows(
+            staged_genes, GENE_FIELDS, profile.gene_rows(), collect=config.collect_rows
+        )
+        window_rows = _write_rows(
+            staged_windows, WINDOW_FIELDS, profile.window_rows(), collect=config.collect_rows
         )
 
-        with tempfile.TemporaryDirectory(
-            prefix=f".{config.prefix}.staging-",
-            dir=outputs["genes"].parent,
-        ) as temporary:
-            staging_dir = Path(temporary)
-            staged_genes = staging_dir / outputs["genes"].name
-            staged_windows = staging_dir / outputs["windows"].name
-            staged_summary = staging_dir / outputs["summary"].name
-            staged_pdf = staging_dir / outputs["plot_pdf"].name
-            staged_png = staging_dir / outputs["plot_png"].name
+    pdf_path: Path | None = None
+    png_path: Path | None = None
+    plot_metadata: dict[str, int] = {}
+    if config.make_plot:
+        from .plotting import plot_windows
 
-            _write_rows(
-                staged_genes,
-                [
-                    "target_seqid",
-                    "target_gene",
-                    "target_rank",
-                    "query_seqid",
-                    "retained",
-                    "query_genes",
-                ],
-                gene_rows,
+        with run.stage("plot"):
+            plot_metadata = plot_windows(
+                profile.window_rows(),
+                staged_pdf,
+                staged_png,
+                target_name=config.target_name,
+                query_name=config.query_name,
+                window_size=config.window_size,
             )
-            _write_rows(
-                staged_windows,
-                [
-                    "target_seqid",
-                    "query_seqid",
-                    "window_index",
-                    "start_rank",
-                    "end_rank",
-                    "start_gene",
-                    "end_gene",
-                    "retained_count",
-                    "window_size",
-                    "retention_fraction",
-                    "retention_percent",
-                ],
-                window_rows,
-            )
-
-            pdf_path: Path | None = None
-            png_path: Path | None = None
-            if config.make_plot:
-                from .plotting import plot_windows
-
-                plot_windows(
-                    window_rows,
-                    staged_pdf,
-                    staged_png,
-                    target_name=config.target_name,
-                    query_name=config.query_name,
-                    window_size=config.window_size,
-                )
-                pdf_path = outputs["plot_pdf"]
-                png_path = outputs["plot_png"]
-
-            _verify_input_snapshots(inputs, input_snapshots)
-            output_hashes = {
-                "genes": sha256_file(staged_genes),
-                "windows": sha256_file(staged_windows),
-                "plot_pdf": sha256_file(staged_pdf) if config.make_plot else None,
-                "plot_png": sha256_file(staged_png) if config.make_plot else None,
-            }
-            summary = {
-                "schema_version": 3,
-                "program": "kfFractBias",
-                "program_version": __version__,
-                "analysis_mode": config.analysis_mode,
-                "target_name": config.target_name,
-                "query_name": config.query_name,
-                "runtime": _runtime_metadata(),
-                "parameters": {
-                    "window_size": config.window_size,
-                    "step_size": config.step_size,
-                    "denominator": config.denominator,
-                    "synteny_format": resolved_synteny_format,
-                    "requested_synteny_format": config.synteny_format,
-                    "target_seqids": sorted({gene.seqid for gene in target_genes}, key=natural_key),
-                    "query_seqids": ordered_query_seqids,
-                    "exclude_seqid_regex": config.exclude_seqid_regex,
-                    "include_unmatched_query_seqids": config.include_unmatched_query_seqids,
-                },
-                "counts": {
-                    "input_target_gene_count": len(all_target_genes),
-                    "input_query_gene_count": len(all_query_genes),
-                    "target_gene_count": len(target_genes),
-                    "analyzed_target_gene_count": sum(
-                        len(genes) for genes in target_by_seqid.values()
-                    ),
-                    "query_gene_count": len(query_genes),
-                    "analyzed_query_sequence_count": len(ordered_query_seqids),
-                    "input_synteny_record_count": parsed_synteny.record_count,
-                    "duplicate_synteny_pair_count": parsed_synteny.duplicate_pair_count,
-                    "sequence_filtered_synteny_pair_count": len(parsed_synteny.pairs)
-                    - len(input_pairs),
-                    "synteny_pair_count": len(pairs),
-                    "gene_table_row_count": len(gene_rows),
-                    "window_table_row_count": len(window_rows),
-                    **pair_counts,
-                },
-                "inputs": input_snapshots,
-                "outputs": {
-                    "genes": str(outputs["genes"]),
-                    "windows": str(outputs["windows"]),
-                    "plot_pdf": str(pdf_path) if pdf_path else None,
-                    "plot_png": str(png_path) if png_path else None,
-                },
-                "output_sha256": output_hashes,
-                "metadata": config.metadata,
-            }
-            _write_json(staged_summary, summary)
-            _commit_outputs(
-                {
-                    outputs["genes"]: staged_genes,
-                    outputs["windows"]: staged_windows,
-                    outputs["plot_pdf"]: staged_pdf if config.make_plot else None,
-                    outputs["plot_png"]: staged_png if config.make_plot else None,
-                    outputs["summary"]: staged_summary,
-                },
-                staging_dir,
-            )
-
+        pdf_path = outputs["plot_pdf"]
+        png_path = outputs["plot_png"]
+    run.verify_inputs()
+    output_hashes = {
+        "genes": sha256_file(staged_genes),
+        "windows": sha256_file(staged_windows),
+        "plot_pdf": sha256_file(staged_pdf) if config.make_plot else None,
+        "plot_png": sha256_file(staged_png) if config.make_plot else None,
+    }
+    summary = {
+        "schema_version": 3,
+        "program": "kfFractBias",
+        "program_version": __version__,
+        "analysis_mode": config.analysis_mode,
+        "target_name": config.target_name,
+        "query_name": config.query_name,
+        "runtime": _runtime_metadata(),
+        "parameters": {
+            "window_size": config.window_size,
+            "step_size": config.step_size,
+            "denominator": config.denominator,
+            "synteny_format": resolved_synteny_format,
+            "requested_synteny_format": config.synteny_format,
+            "target_seqids": sorted({gene.seqid for gene in target_genes}, key=natural_key),
+            "query_seqids": ordered_query_seqids,
+            "exclude_seqid_regex": config.exclude_seqid_regex,
+            "include_unmatched_query_seqids": config.include_unmatched_query_seqids,
+        },
+        "counts": {
+            "input_target_gene_count": len(all_target_genes),
+            "input_query_gene_count": len(all_query_genes),
+            "target_gene_count": len(target_genes),
+            "analyzed_target_gene_count": sum(map(len, target_by_seqid.values())),
+            "query_gene_count": len(query_genes),
+            "analyzed_query_sequence_count": len(ordered_query_seqids),
+            "input_synteny_record_count": parsed_synteny.record_count,
+            "duplicate_synteny_pair_count": parsed_synteny.duplicate_pair_count,
+            "sequence_filtered_synteny_pair_count": len(parsed_synteny.pairs) - len(input_pairs),
+            "synteny_pair_count": len(pairs),
+            "gene_table_row_count": gene_count,
+            "window_table_row_count": window_count,
+            **pair_counts,
+        },
+        "inputs": run.inputs,
+        "outputs": {
+            "genes": str(outputs["genes"]),
+            "windows": str(outputs["windows"]),
+            "plot_pdf": str(pdf_path) if pdf_path else None,
+            "plot_png": str(png_path) if png_path else None,
+        },
+        "output_sha256": output_hashes,
+        "timings_seconds": run.timings,
+        "plot": plot_metadata,
+        "metadata": run.published_metadata(metadata),
+    }
+    _write_json(staged_summary, summary)
+    run.commit(
+        {
+            outputs["genes"]: staged_genes,
+            outputs["windows"]: staged_windows,
+            outputs["plot_pdf"]: staged_pdf if config.make_plot else None,
+            outputs["plot_png"]: staged_png if config.make_plot else None,
+            outputs["summary"]: staged_summary,
+        }
+    )
     return AnalysisResult(
         genes_path=outputs["genes"],
         windows_path=outputs["windows"],
         summary_path=outputs["summary"],
-        pdf_path=outputs["plot_pdf"] if config.make_plot else None,
-        png_path=outputs["plot_png"] if config.make_plot else None,
-        gene_rows=tuple(gene_rows),
-        window_rows=tuple(window_rows),
+        pdf_path=pdf_path,
+        png_path=png_path,
+        gene_rows=gene_rows,
+        window_rows=window_rows,
     )
