@@ -7,7 +7,7 @@ and use Python 3.11 or newer with the locked development environment:
 uv sync --locked --extra test --extra plot
 ```
 
-Before opening a pull request, run:
+Before opening a pull request or pushing directly to `master`, run:
 
 ```bash
 uv run --no-sync python scripts/check.py
@@ -64,11 +64,12 @@ For a version change or release preparation:
    `uv run --no-sync python scripts/check.py --full --integration`. This checks
    version consistency, builds the selected version, and tests its distributions.
    Run both [worked examples](docs/README.md) when changing user-facing behavior.
-4. Merge through a pull request only after the protected default branch's
-   required checks and review conditions pass. Do not bypass protection rules
-   to publish a version change.
-5. For an actual release, tag that checked default-branch commit as `vX.Y.Z`
-   and describe the supported version and changes in the GitHub release.
+4. Publish the checked commit to `master`. Administrators may push directly;
+   other contributors must use a pull request and satisfy the branch's required
+   checks and review conditions.
+5. For an actual release, wait for CI to pass on that default-branch commit,
+   then tag it as `vX.Y.Z` and describe the supported version and changes in the
+   GitHub release.
    A version bump or passing check alone does not create a release or publish
    a package to PyPI. Resume development with a new `.devN` version and repeat
    the metadata/lockfile synchronization.
