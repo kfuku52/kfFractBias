@@ -146,7 +146,9 @@ def preflight_tools(aligner: str) -> None:
         from ortools.linear_solver import pywraplp
     except ImportError as exc:
         raise RuntimeError(
-            "Synteny generation requires the compare extra: install 'kffractbias[compare]'"
+            "Synteny generation requires the compare extra. From the repository root, run "
+            "python -m pip install '.[compare]' in your active environment, or run "
+            "uv sync --locked --extra all and use uv run --no-sync kffractbias."
         ) from exc
     if pywraplp.Solver.CreateSolver("SCIP") is None:
         raise RuntimeError("JCVI QUOTA-ALIGN requires the OR-Tools SCIP solver")

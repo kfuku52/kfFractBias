@@ -91,7 +91,10 @@ def _add_output_options(parser: argparse.ArgumentParser, *, self_comparison: boo
         "--output-dir", type=_output_path, default=Path.cwd(), help="Output directory"
     )
     parser.add_argument(
-        "--prefix", type=_prefix, default="kffractbias", help="Output filename prefix"
+        "--prefix",
+        type=_prefix,
+        default="kffractbias",
+        help="Output filename prefix; successful runs replace existing result files",
     )
     if self_comparison:
         parser.add_argument(
@@ -108,7 +111,7 @@ def _add_output_options(parser: argparse.ArgumentParser, *, self_comparison: boo
         "--window-size",
         type=_positive_int,
         default=100,
-        help="Genes per sliding window (default: 100)",
+        help="Genes per complete sliding window; partial windows are omitted (default: 100)",
     )
     parser.add_argument(
         "--step-size", type=_positive_int, default=1, help="Genes advanced per window (default: 1)"
@@ -128,7 +131,10 @@ def _add_output_options(parser: argparse.ArgumentParser, *, self_comparison: boo
             "--target-seqids", action="append", default=[], help="Comma-separated target sequences"
         )
         parser.add_argument(
-            "--query-seqids", action="append", default=[], help="Comma-separated query sequences"
+            "--query-seqids",
+            action="append",
+            default=[],
+            help="Comma-separated query sequences; includes unmatched selected sequences",
         )
     parser.add_argument(
         "--exclude-seqid-regex", type=_regex, default="", help="Regex for sequences to exclude"
@@ -138,7 +144,11 @@ def _add_output_options(parser: argparse.ArgumentParser, *, self_comparison: boo
         action="store_true",
         help="Include query sequences without retained synteny pairs in output tables",
     )
-    parser.add_argument("--no-plot", action="store_true", help="Do not create PDF and PNG plots")
+    parser.add_argument(
+        "--no-plot",
+        action="store_true",
+        help="Omit plots and remove existing plots for this prefix on success",
+    )
     parser.add_argument(
         "--keep-failed-work",
         action="store_true",
@@ -282,7 +292,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--diagonal-bound",
         type=_positive_int,
         default=300,
-        help="Minimum gene-rank distance for intrachromosomal self-synteny blocks (default: 300)",
+        help="Minimum gene-rank distance between intrachromosomal self anchors (default: 300)",
     )
     selfcompare.add_argument(
         "--force", action="store_true", help="Replace an existing synteny work directory"

@@ -10,6 +10,16 @@ Haug-Baltzell, Sean Davey, Matthew Bomhoff, James C. Schnable, and Eric Lyons.
 This repository contains the maintained Python 3 implementation; the original
 Python 2 and notebook sources remain available in the Git history.
 
+The `master` branch is the source development line, identified by a `.dev`
+package version. The earlier `0.1.3` and `0.1.4` labels were untagged development
+milestones, not published GitHub releases. Install from this repository and
+record both `kffractbias version` and `git rev-parse HEAD` when reporting results.
+See the [migration guide](docs/migration.md) for changes from those snapshots.
+
+[Documentation](docs/README.md) covers calculation rules, input/output formats,
+worked examples, troubleshooting, and development. These repository documents
+describe this offline CLI; the upstream CoGe Wiki describes the original web tool.
+
 ## What is different
 
 - Python 3 package and the `kffractbias` executable
@@ -33,20 +43,43 @@ are supported on local POSIX filesystems; Windows and network filesystems are
 not supported or tested.
 
 ```bash
+git clone https://github.com/kfuku52/kfFractBias.git
+cd kfFractBias
+python3 -m venv .venv
+source .venv/bin/activate
 python -m pip install '.[plot]'
 kffractbias version
 ```
 
+Use a Python 3.11+ interpreter for `python3` above. The commands below assume
+the repository root and an activated environment. PyPI package-name installation
+is not a supported source for this development line; `.` means this checkout.
+
 The base installation has no third-party runtime dependencies and supports
 `calculate --no-plot`, `validate`, `formats`, and `version`. Use `.[plot]` for
-plots or `.[compare]` for plots plus the end-to-end JCVI commands. For a fully
-locked environment, install [uv](https://docs.astral.sh/uv/) and run
-`uv sync --locked --extra all`.
+plots or `.[compare]` for plots plus the end-to-end JCVI commands; `.[all]` has
+the same runtime dependencies as `.[compare]`.
+
+Alternatively, after cloning and entering the repository, install
+[uv](https://docs.astral.sh/uv/) and use the locked comparison environment:
+
+```bash
+uv sync --locked --extra all
+source .venv/bin/activate
+kffractbias version
+```
+
+Without activation, prefix each command with `uv run --no-sync`, for example
+`uv run --no-sync kffractbias version`. Choose `--extra plot` instead of
+`--extra all` for the smaller plotting environment, or omit extras for base use.
 
 The `compare` extra includes JCVI, but its default `last` aligner also requires
-the external `lastal` and `lastdb` executables. JCVI QUOTA-ALIGN requires its
-mixed-integer solver dependency.
+the external `lastal` and `lastdb` executables. JCVI QUOTA-ALIGN uses the
+OR-Tools SCIP solver backend, installed through the comparison dependency tree.
 For `--aligner blast`, install NCBI BLAST+ (`blastn` and `makeblastdb`) instead.
+Make the selected executables available on `PATH` in the same shell; pip/uv
+do not install them. For example, CI installs `last-align` and `ncbi-blast+`
+with apt on Ubuntu. See [troubleshooting](docs/troubleshooting.md) for checks.
 The search task is explicitly `blastn` for divergent CDS; choose
 `--blast-task dc-megablast` or `--blast-task megablast` if those search heuristics
 are appropriate. The latter can miss short or regularly diverged sequences
@@ -60,7 +93,9 @@ and saved as `preflight.json` in the synteny directory.
 
 ### Calculate from precomputed synteny
 
-`calculate` accepts a JCVI `.anchors` file or SynMap/DAGCHAINER output. The
+`calculate` accepts a JCVI `.anchors` file or the legacy SynMap extended
+DAGCHAINER format with `||` subfields; see [input formats](docs/formats.md).
+Generic DAGCHAINER output is not interchangeable with that SynMap format. The
 target and query BED identifiers must match the synteny identifiers. BED
 coordinates use the standard zero-based, half-open convention. Target and
 query gene identifier sets must be disjoint for pairwise analysis so pair
@@ -104,6 +139,9 @@ kffractbias compare \
 The quota is always explicit: `1:2` means one expected target region for two
 expected query regions. Reversing target and query also requires reversing the
 quota.
+
+For runnable synthetic CDS/GFF inputs and expected results, use the
+[annotation tutorial](examples/annotations/README.md).
 
 CDS-to-GFF mapping is strict by default: every FASTA identifier must map to the
 selected GFF feature and attribute. If incomplete mapping is intentional, set
@@ -192,7 +230,9 @@ Other commands are `kffractbias formats` and `kffractbias version`.
 
 ## Outputs
 
-For a prefix such as `sorghum_maize`, kfFractBias writes:
+For a prefix such as `sorghum_maize`, kfFractBias writes the following files.
+The [format reference](docs/formats.md) defines every TSV column and the
+versioned summary JSON.
 
 - `sorghum_maize.genes.tsv`: retention and matching query IDs for each target
   gene and query sequence combination
@@ -202,7 +242,13 @@ For a prefix such as `sorghum_maize`, kfFractBias writes:
   panels per page and twelve query sequences per panel
 - `sorghum_maize.plot.png`: a preview of the first PDF page; the summary records
   page/panel counts (use the PDF for all profiles)
-- `sorghum_maize.synteny/`: retained JCVI working data from `compare`
+- `sorghum_maize.synteny/`: retained JCVI working data from `compare` or `selfcompare`
+
+A successful run replaces existing result files with the same output directory
+and prefix. `calculate` does not require an overwrite flag. `--no-plot` omits
+new figures and removes any old PDF/PNG for that prefix on success. Use a new
+prefix or output directory to preserve an earlier result. `--force` on the
+comparison commands controls replacement of the synteny working directory.
 
 `selfcompare` writes the same output set and records identity/mirror filtering,
 interchromosomal and intrachromosomal pair counts, symmetric depth, and the
@@ -211,11 +257,20 @@ interpretation limitation in the JSON summary.
 `--denominator all` uses every target gene in each window. `--denominator
 syntenic` first removes target genes without any retained query match, matching
 the two denominator choices exposed by the original FractBias implementation.
+Ranks are then assigned again within each target sequence. Window and step sizes
+count these analyzed genes, not bases. Only complete windows are written;
+sequences shorter than the window and incomplete trailing windows produce no
+window rows. Output ranks start at one and include the ending rank, unlike BED
+coordinates. Multiple matches on one query sequence count once per target gene.
+See [calculation rules](docs/methods.md) for the formulas and worked examples.
 
 By default, output tables include only query sequences represented by retained
-synteny pairs. This avoids a target-gene by every-query-contig cross product on
-fragmented assemblies. Use `--include-unmatched-query-seqids` when explicit
-zero-retention profiles for every selected query sequence are required.
+synteny pairs. Rows still form a dense product of analyzed target genes and
+those query sequences. Streaming limits memory use, not output size. Use
+`--include-unmatched-query-seqids` for zero-retention profiles of all selected
+query sequences. An explicit `--query-seqids` selection also includes its
+unmatched sequences; `--seqids` does the same for self-comparison. At least one
+synteny pair must survive selection, even when unmatched sequences are included.
 
 The summary schema records input and output SHA-256 hashes, input and selected
 gene counts, synteny record and duplicate counts, Python/platform/package
@@ -280,7 +335,8 @@ uv sync --locked --extra test --extra plot
 uv run --no-sync python scripts/check.py
 ```
 
-The opt-in pairwise and self-synteny JCVI/LAST integration tests (plus BLAST+ when installed) run in CI and can be run locally with
+The opt-in pairwise and self-synteny JCVI/LAST integration tests (plus BLAST+
+when installed) run in CI and can be run locally with
 `uv sync --locked --extra test --extra all`, then
 `uv run --no-sync python scripts/check.py --full --integration`.
 The full check builds and installs the wheel without runtime dependencies,

@@ -16,7 +16,7 @@ authors:
     given-names: James C.
   - family-names: Lyons
     given-names: Eric
-version: 0.1.4
+version: 0.2.0.dev0
 license: MIT
 repository-code: https://github.com/kfuku52/kfFractBias
 preferred-citation:

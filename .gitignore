@@ -12,3 +12,6 @@ htmlcov/
 .*.lock
 build/
 dist/
+/annotation-inputs/
+/annotation-results/
+/example-output/
