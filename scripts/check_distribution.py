@@ -82,8 +82,15 @@ def main() -> None:
             "CHANGELOG.md",
             "uv.lock",
             "scripts/check.py",
+            "scripts/generate_example.py",
             "tests/test_metadata.py",
             "examples/minimal/target.bed",
+            "examples/annotations/README.md",
+            "docs/README.md",
+            "docs/formats.md",
+            "docs/methods.md",
+            "docs/migration.md",
+            "docs/troubleshooting.md",
         ):
             assert (extracted / path).is_file(), f"sdist missing {path}"
         run(

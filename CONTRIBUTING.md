@@ -1,6 +1,7 @@
 # Contributing
 
-Use Python 3.11 or newer and install the locked development environment:
+Clone the repository as described in the [README](README.md), enter its root,
+and use Python 3.11 or newer with the locked development environment:
 
 ```bash
 uv sync --locked --extra test --extra plot
@@ -15,6 +16,8 @@ uv run --no-sync python scripts/check.py
 For coverage, wheel/sdist build, and isolated distribution tests, use
 `uv run --no-sync python scripts/check.py --full`. For changes to synteny,
 install the locked `test` and `all` extras and LAST, then add `--integration`.
+Install BLAST+ as well to exercise both aligners as CI does. BLAST tests skip
+when `blastn` is absent; a local run with skips is not a check of that aligner.
 Use `--no-sync` while checking so an invocation does not remove optional
 packages from an already prepared integration environment.
 
@@ -39,5 +42,38 @@ Inspect setup/cache, aligner installation, and test-step durations separately
 when assessing CI latency. A cache hit is not a guarantee of a fixed speedup.
 
 Keep `pyproject.toml`, `CITATION.cff`, and `CHANGELOG.md` synchronized when
-preparing a release. Releases are tagged as `vX.Y.Z` from the protected default
-branch after all required checks pass.
+changing the version. `uv.lock` and installed package metadata must also match;
+the metadata test checks consistency rather than a fixed version string.
+
+For a version change or release preparation:
+
+1. Set the intended version in `pyproject.toml` and `CITATION.cff`. Development
+   snapshots use a `.devN` suffix. For a release, move the relevant Unreleased
+   changes into a dated version section and update the README release-status
+   text. Historical untagged milestones must remain labeled as such.
+2. Regenerate the lockfile and reinstall this checkout, without upgrading
+   unrelated dependencies:
+
+   ```bash
+   uv lock
+   uv sync --locked --extra test --extra all
+   uv run --no-sync kffractbias version
+   ```
+
+3. Inspect the lockfile diff. With LAST and BLAST+ installed, run
+   `uv run --no-sync python scripts/check.py --full --integration`. This checks
+   version consistency, builds the selected version, and tests its distributions.
+   Run both [worked examples](docs/README.md) when changing user-facing behavior.
+4. Merge through a pull request only after the protected default branch's
+   required checks and review conditions pass. Do not bypass protection rules
+   to publish a version change.
+5. For an actual release, tag that checked default-branch commit as `vX.Y.Z`
+   and describe the supported version and changes in the GitHub release.
+   A version bump or passing check alone does not create a release or publish
+   a package to PyPI. Resume development with a new `.devN` version and repeat
+   the metadata/lockfile synchronization.
+
+The maintained user documentation lives in [docs](docs/README.md). Update it,
+the README, and the examples together when inputs, outputs, or CLI behavior
+change. Keep any future Wiki navigation pointed at these files rather than
+maintaining a second copy of the instructions.

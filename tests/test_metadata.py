@@ -1,4 +1,5 @@
 import re
+import tomllib
 from pathlib import Path
 
 from kffractbias import __version__
@@ -15,9 +16,17 @@ def _declared_version(path: Path) -> str:
 
 
 def test_version_metadata_stays_synchronized() -> None:
-    assert _declared_version(ROOT / "pyproject.toml") == "0.1.4"
-    assert _declared_version(ROOT / "CITATION.cff") == "0.1.4"
-    assert __version__ == "0.1.4"
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    expected = project["version"]
+    assert _declared_version(ROOT / "CITATION.cff") == expected
+    assert __version__ == expected
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    (locked_project,) = (
+        package
+        for package in lock["package"]
+        if package["name"] == project["name"] and package["source"] == {"editable": "."}
+    )
+    assert locked_project["version"] == expected
 
 
 def test_citation_has_top_level_authors_and_standard_license() -> None:

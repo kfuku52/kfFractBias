@@ -1,10 +1,18 @@
 # Changelog
 
 All notable changes are documented here. This project follows Semantic
-Versioning after the first tagged release.
+Versioning after the first tagged release. Earlier 0.1.x headings identify
+untagged development milestones, not published release artifacts. See the
+[migration guide](docs/migration.md) when updating an older checkout.
 
 ## Unreleased
 
+- Identify the source development line as `0.2.0.dev0`, distinct from the old
+  untagged 0.1.4 implementation; keep citation and lockfile versions in sync.
+- Complete source-install and release instructions, repair dependency guidance,
+  and document window/rank semantics, output replacement, formats, and migration.
+- Add reproducible annotation examples and expected retention values, include
+  documentation in the sdist, and enable private vulnerability reporting.
 - Fix interchromosomal self-synteny loss at the default diagonal bound and
   enforce self quota across both arms of the same genome.
 - Specify the BLAST nucleotide search task explicitly, support task overrides,
@@ -23,7 +31,7 @@ Versioning after the first tagged release.
 - Cache locked CI dependencies and add fast development checks, independent
   numeric oracles, scientific integration assertions, and a synthetic benchmark.
 
-## 0.1.4 - 2026-08-19
+## 0.1.4 - 2026-08-19 (untagged development milestone)
 
 - Reject input/output path collisions and unsafe `--force` work-directory use.
 - Validate every synteny row and reject ambiguous pairwise gene identifiers.
@@ -34,7 +42,7 @@ Versioning after the first tagged release.
 - Split optional runtime dependencies, add a lock file, and expand CI coverage.
 - Add current examples and repository maintenance documentation.
 
-## 0.1.3
+## 0.1.3 (untagged development milestone)
 
 - Provide the maintained offline Python 3 CLI with pairwise and self-synteny
   analysis.

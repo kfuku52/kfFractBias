@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kffractbias"
-version = "0.1.4"
+version = "0.2.0.dev0"
 description = "Offline fractionation-bias analysis from precomputed synteny or genome annotations"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -58,6 +58,7 @@ kffractbias = "kffractbias.cli:main"
 [project.urls]
 Homepage = "https://github.com/kfuku52/kfFractBias"
 Source = "https://github.com/kfuku52/kfFractBias"
+Documentation = "https://github.com/kfuku52/kfFractBias/blob/master/docs/README.md"
 Upstream = "https://github.com/bjoyce3/SynMapFractBiasAnalysis"
 
 [tool.setuptools]

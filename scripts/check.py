@@ -15,7 +15,9 @@ def main() -> None:
         "--full", action="store_true", help="Add coverage, build and isolated distribution tests"
     )
     parser.add_argument(
-        "--integration", action="store_true", help="Require compare extra and LAST/BLAST on PATH"
+        "--integration",
+        action="store_true",
+        help="Run real JCVI/LAST tests, plus BLAST+ tests when BLAST+ is installed",
     )
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
