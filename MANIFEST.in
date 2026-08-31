@@ -1,0 +1,4 @@
+include CITATION.cff CHANGELOG.md CONTRIBUTING.md SECURITY.md uv.lock
+recursive-include examples/minimal *.md *.bed *.anchors
+recursive-include scripts *.py
+recursive-include tests *.py

@@ -15,7 +15,14 @@ def write(path: Path, text: str) -> Path:
 def test_public_subcommand_names_have_no_hyphens():
     parser = build_parser()
     subparsers = next(action for action in parser._actions if action.dest == "command")
-    assert set(subparsers.choices) == {"calculate", "compare", "selfcompare", "validate", "formats", "version"}
+    assert set(subparsers.choices) == {
+        "calculate",
+        "compare",
+        "selfcompare",
+        "validate",
+        "formats",
+        "version",
+    }
     assert all("-" not in command for command in subparsers.choices)
 
 
@@ -44,6 +51,39 @@ def test_calculate_cli(tmp_path):
     assert (output / "kffractbias.genes.tsv").is_file()
     assert (output / "kffractbias.windows.tsv").is_file()
     assert (output / "kffractbias.summary.json").is_file()
+
+
+def test_calculate_reuses_self_anchors_without_alignment(tmp_path):
+    import json
+
+    bed = write(tmp_path / "self.bed", "chr1\t0\t3\tg1\nchr2\t0\t3\tg2\n")
+    anchors = write(tmp_path / "self.anchors", "g1\tg2\t10\ng2\tg1\t10\n")
+    output = tmp_path / "out"
+    assert (
+        main(
+            [
+                "calculate",
+                "--self",
+                "--target-bed",
+                str(bed),
+                "--query-bed",
+                str(bed),
+                "--synteny",
+                str(anchors),
+                "--output-dir",
+                str(output),
+                "--window-size",
+                "1",
+                "--no-plot",
+            ]
+        )
+        == 0
+    )
+    summary = json.loads((output / "kffractbias.summary.json").read_text())
+    assert summary["analysis_mode"] == "self_synteny_retention"
+    assert summary["counts"]["synteny_pair_count"] == 1
+    assert summary["counts"]["directed_synteny_pair_count"] == 2
+    assert "not an outgroup-based" in summary["metadata"]["interpretation"]
 
 
 def test_selfcompare_cli_uses_one_annotation_and_self_mode(tmp_path, monkeypatch):

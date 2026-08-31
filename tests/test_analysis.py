@@ -23,9 +23,7 @@ def make_inputs(tmp_path):
     )
     query = write(
         tmp_path / "query.bed",
-        "chrA\t0\t10\tq1\t0\t+\n"
-        "chrA\t20\t30\tq2\t0\t+\n"
-        "chrB\t0\t10\tq3\t0\t+\n",
+        "chrA\t0\t10\tq1\t0\t+\nchrA\t20\t30\tq2\t0\t+\nchrB\t0\t10\tq3\t0\t+\n",
     )
     anchors = write(
         tmp_path / "target.query.anchors",
@@ -146,10 +144,7 @@ def test_additional_inputs_are_hashed_in_summary(tmp_path):
 def test_self_synteny_removes_identity_and_mirrors_then_maps_both_directions(tmp_path):
     bed = write(
         tmp_path / "self.bed",
-        "chr1\t0\t10\tg1\n"
-        "chr1\t20\t30\tg2\n"
-        "chr2\t0\t10\tg3\n"
-        "chr2\t20\t30\tg4\n",
+        "chr1\t0\t10\tg1\nchr1\t20\t30\tg2\nchr2\t0\t10\tg3\nchr2\t20\t30\tg4\n",
     )
     anchors = write(
         tmp_path / "self.self.anchors",
@@ -168,9 +163,7 @@ def test_self_synteny_removes_identity_and_mirrors_then_maps_both_directions(tmp
         )
     )
     retained_pairs = {
-        (row["target_gene"], row["query_genes"])
-        for row in result.gene_rows
-        if row["retained"] == 1
+        (row["target_gene"], row["query_genes"]) for row in result.gene_rows if row["retained"] == 1
     }
     assert retained_pairs == {("g1", "g3"), ("g2", "g4"), ("g3", "g1"), ("g4", "g2")}
     summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
