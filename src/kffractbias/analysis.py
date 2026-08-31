@@ -15,6 +15,7 @@ from typing import Any, TypeVar
 from . import __version__
 from .io import Gene, detect_synteny_format, natural_key, parse_synteny_pairs, read_bed, sha256_file
 from .profiles import GENE_FIELDS, WINDOW_FIELDS, GeneRow, RetentionProfile, WindowRow
+from .provenance import source_metadata
 from .run import RunContext, analysis_run, output_paths, validate_prefix, validate_separation
 
 
@@ -153,6 +154,7 @@ def _runtime_metadata() -> dict[str, Any]:
         "python": sys.version.split()[0],
         "platform": platform.platform(),
         "packages": packages,
+        "source": source_metadata(),
     }
 
 

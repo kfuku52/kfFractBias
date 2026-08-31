@@ -17,8 +17,11 @@ kffractbias version
 
 For uv without activation, use `uv run --no-sync kffractbias version`.
 Save the matching `uv.lock` and external aligner versions. Summary JSON records
-package/tool versions and input hashes, but does not automatically capture the
-Git commit of an editable installation.
+package/tool versions and input hashes. New summaries also include
+`runtime.source`: the package's import-time Git revision/dirty state, when
+available, plus a Python-source fingerprint that also works without Git.
+Earlier summaries lack this field. See the [source identity reference](formats.md#source-identity)
+for what the fingerprint covers and why an installed wheel's Git fields are null.
 
 | Older behavior or assumption | Current behavior and migration |
 | --- | --- |
@@ -27,6 +30,7 @@ Git commit of an editable installation.
 | The same gene IDs used in two genomes | Pairwise IDs must be disjoint. Prefix IDs consistently in each genome's FASTA/GFF/BED/anchors; do not rename only one file. |
 | Partial CDS-to-annotation mapping accepted | Mapping defaults to 100%. Inspect the missing IDs first; use an explicit minimum fraction only if loss is intentional. |
 | Multiple transcript IDs counted as independent genes | Choose representative input or `--isoform-policy longest`; use `all` only when identifier-level counting is intended. |
+| Empty sequence names, arbitrary strand values, or opposite-strand segments silently accepted | Correct the annotation/BED fields. Unknown `?` is normalized to `.`, and conflicting known strands for one mapped ID are rejected. |
 | Malformed synteny rows silently skipped | Every data row must have valid structure and resolve to the supplied BEDs, even if its sequence is later excluded. |
 | Native JCVI self filtering and quota behavior | The chromosome-aware adapter fixes interchromosomal filtering and shares self depth constraints across both axes. Regenerate old self anchors to obtain these corrections. |
 | Native BLAST search-task defaults | BLAST searches explicitly use `blastn`; overrides are recorded. Regenerate anchors if the old task missed divergent matches. |

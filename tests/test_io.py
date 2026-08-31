@@ -190,3 +190,77 @@ def test_ambiguous_locus_is_rejected(tmp_path):
     gff = write(tmp_path / "genes.gff", "chr1\tt\tmRNA\t1\t3\t.\t+\t.\tID=t1;Parent=g1,g2\n")
     with pytest.raises(ValueError, match="multiple gene loci"):
         prepare_genome("x", fasta, gff, tmp_path)
+
+
+@pytest.mark.parametrize(
+    "seqid,strand,message",
+    [
+        ("", "+", "Empty GFF sequence identifier"),
+        ("   ", "+", "Empty GFF sequence identifier"),
+        ("chr 1", "+", "Invalid GFF sequence identifier"),
+        ("chr\x00", "+", "Invalid GFF sequence identifier"),
+        ("chr1", "INVALID", "Invalid GFF strand"),
+        ("chr1", "", "Invalid GFF strand"),
+    ],
+)
+def test_invalid_gff_fields_report_the_source_line(tmp_path, seqid, strand, message):
+    gff = write(
+        tmp_path / "invalid.gff",
+        f"##gff-version 3\n\n{seqid}\ttest\tmRNA\t1\t3\t.\t{strand}\t.\tID=t1\n",
+    )
+    with pytest.raises(ValueError, match=message) as caught:
+        annotation_to_genes(gff, {"t1"})
+    assert f"{gff}:3" in str(caught.value)
+
+
+@pytest.mark.parametrize("strands", [("+", "-"), ("-", "+"), ("+", ".", "-"), ("-", "?", "+")])
+def test_conflicting_gff_segments_are_not_silently_merged(tmp_path, strands):
+    gff = write(
+        tmp_path / "conflict.gff",
+        "".join(
+            f"chr1\ttest\tCDS\t{i * 10 + 1}\t{i * 10 + 3}\t.\t{strand}\t0\tParent=t1\n"
+            for i, strand in enumerate(strands)
+        ),
+    )
+    with pytest.raises(ValueError, match="conflicting strands") as caught:
+        annotation_to_genes(gff, {"t1"})
+    assert f"{gff}:{len(strands)}" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "strands,expected",
+    [
+        (("+", "+"), "+"),
+        (("-", "-"), "-"),
+        (("?", "."), "."),
+        (("+", "?", "."), "+"),
+        (("?", "-"), "-"),
+    ],
+)
+def test_valid_gff_segments_produce_readable_bed(tmp_path, strands, expected):
+    fasta = write(tmp_path / "cds.fa", ">t1\nATGATG\n")
+    gff = write(
+        tmp_path / "genes.gff",
+        "".join(
+            f"chr1\ttest\tCDS\t{i * 10 + 1}\t{i * 10 + 3}\t.\t{strand}\t0\tParent=t1\n"
+            for i, strand in enumerate(strands)
+        ),
+    )
+    prepared = prepare_genome("valid", fasta, gff, tmp_path)
+    assert read_bed(prepared.bed_path) == prepared.mapping.genes
+    (gene,) = prepared.mapping.genes
+    assert (gene.start, gene.end, gene.strand) == (0, (len(strands) - 1) * 10 + 3, expected)
+
+
+@pytest.mark.parametrize(
+    "record,message",
+    [
+        ("chr 1\t0\t3\tt1\n", "Invalid BED sequence identifier"),
+        ("chr1\t0\t3\tt1\t0\tINVALID\n", "Invalid BED strand"),
+    ],
+)
+def test_invalid_bed_fields_report_the_source_line(tmp_path, record, message):
+    bed = write(tmp_path / "invalid.bed", record)
+    with pytest.raises(ValueError, match=message) as caught:
+        read_bed(bed)
+    assert f"{bed}:1" in str(caught.value)

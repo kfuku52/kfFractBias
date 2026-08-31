@@ -22,6 +22,20 @@ transcript, gene, and CDS; explicit feature/attribute overrides must be paired.
 Pairwise overrides are `--target-feature`/`--target-attribute` and their query
 equivalents; selfcompare uses `--feature`/`--attribute`.
 
+Sequence IDs must be nonempty and contain no literal whitespace or control
+characters. Strand must be `+`, `-`, `.`, or `?`; unknown `?` is normalized to
+`.` in prepared BED. These checks apply to every annotation row, even if a
+different feature is selected. See the
+[GFF3 specification](https://github.com/The-Sequence-Ontology/Specifications/blob/master/gff3.md)
+for the source format; this program does not perform a complete GFF3 ontology,
+phase, or biological-validity check.
+
+Multiple segments of a mapped identifier must share a sequence and cannot
+have conflicting known strands. Compatible CDS segments are merged into their
+outer interval. A known strand is retained when other segments have unknown
+strand; unknown rows cannot hide a `+`/`-` conflict. Invalid fields and conflicts
+report the annotation file and line number before alignment starts.
+
 The default mapping fraction is 1.0. The fraction is checked before isoform
 selection. GFF3 Parent/GTF gene_id relationships determine known loci; missing
 relationships are reported rather than guessed. See the README for the
@@ -34,12 +48,12 @@ BED input is tab-delimited, with at least four columns:
 
 | Position | Field | Requirement |
 | --- | --- | --- |
-| 1 | sequence ID | Nonempty chromosome/contig name. |
+| 1 | sequence ID | Nonempty chromosome/contig name, without whitespace or control characters. |
 | 2 | start | Integer, zero-based, at least zero. |
 | 3 | end | Integer, exclusive endpoint, greater than start. |
 | 4 | gene ID | Nonempty, unique within that BED. |
 | 5 | score | Optional; not used in retention calculations. |
-| 6 | strand | Optional; stored as `.` if absent. |
+| 6 | strand | Optional `+`, `-`, `.`, or `?`; absent or unknown `?` is stored as `.`. |
 
 Additional columns are not used. Multiple exons must not be supplied as
 separate BED rows with the same ID. The program orders rows; the input does not
@@ -139,7 +153,7 @@ the schema. Consumers should use field names rather than JSON member order.
 | program, program_version | Program name and installed package version. |
 | analysis_mode | `pairwise_fractionation_bias` or `self_synteny_retention`. |
 | target_name, query_name | User-facing genome labels. |
-| runtime | Python/platform and installed package versions; unavailable optional packages are null. |
+| runtime | Python/platform, installed package versions, and source identity; unavailable optional packages are null. |
 | parameters | Window/step, denominator, resolved and requested synteny formats, resolved sequence lists, exclusion regex, unmatched-query flag. |
 | counts | Input, selected, analyzed, pair, and output-row counts described below. |
 | inputs | Input labels mapped to original/final prepared paths and raw-file SHA-256 hashes. Source FASTA/GFF and prepared BED/CDS are recorded separately for comparisons. |
@@ -148,6 +162,34 @@ the schema. Consumers should use field names rather than JSON member order.
 | timings_seconds | Measured stage times. Nested synteny/preflight stages overlap; do not sum them as elapsed wall time. The successful summary is written before commit, so it does not include commit time. |
 | plot | Page/panel counts and limits, including png_page 1; empty when plotting is off. |
 | metadata | Comparison-generation details, tools, quota, annotation mapping, and self interpretation where applicable; empty for a basic pairwise calculate run. |
+
+### Source identity
+
+`runtime.source` identifies the package files at import time (normally CLI
+startup), independently of the directory containing input files:
+
+| Key | Meaning |
+| --- | --- |
+| git_commit | Commit of the Git checkout tracking the imported package; null when Git is unavailable or the package is not tracked. |
+| git_dirty | Whether that repository has staged, unstaged, or non-ignored untracked changes at import time; null without Git information. This is repository-wide, so documentation changes also make it true. |
+| python_source_sha256 | Fingerprint of the package's Python source filenames and bytes; available without Git, or null if the sources cannot be read. It excludes bytecode, inputs, dependencies, and files outside the package. |
+| hash_format | `kffractbias-python-source-v1`, the fingerprint format. |
+
+The fingerprint starts with the ASCII format name plus a NUL byte. For each
+`.py` file, sorted by its package-relative POSIX path, append the UTF-8 path
+plus NUL and the 32 raw SHA-256 digest bytes of the file contents; take SHA-256
+of the resulting byte sequence. Matching wheel/sdist/checkouts have the same
+fingerprint when their Python source bytes match. Git information is not
+inferred from a user's current directory or from a repository containing an
+untracked virtual environment, and a wheel does not claim a build commit.
+
+Do not edit or dynamically patch the package while an analysis is running.
+This records an import-time disk snapshot, not later edits or in-memory code
+patches. Retain the package/checkout, environment, and inputs as well as the
+summary to reproduce a run. Older schema-3 summaries may lack `runtime.source`;
+consumers must tolerate that missing additive field.
+
+### Counts
 
 Common counts have these meanings:
 

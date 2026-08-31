@@ -29,8 +29,21 @@ generated result directories, credentials, or local environments.
 Synteny tests assert known pair sets, depth, diagonal boundaries, and retention
 values, not just nonempty files. The fast suite includes a naive retention
 oracle, README CLI parsing, subprocess hash-seed checks, multiprocess locking,
-input mutation, and commit/rollback failure injection. The optional JCVI core
+input mutation, source provenance, documentation examples/links, and
+commit/rollback failure injection. The optional JCVI core
 tests do not require LAST. Use synthetic fixture generators for new tests.
+
+The fast suite runs the minimal example and annotation validation directly from
+their documented commands. Keep runnable commands in bash/sh/shell/console
+fences so they can be checked. The annotation integration tests use the same
+generator and documented comparison commands, including the optional plot and
+BLAST variants, and check known pairs, table sizes, and retention values.
+
+CI preserves the existing Linux/Python 3.11–3.14 check names and adds a
+macOS/Python 3.12 fast job for filesystem/locking behavior. The Linux/Python 3.14
+job installs the comparison extras as well; external LAST/BLAST integration
+remains on Linux/Python 3.12. Distribution checks compare source fingerprints
+between checkout, wheel, and sdist, including a wheel without Git provenance.
 
 Run `python scripts/benchmark.py --genes 10000 --queries 100` to measure dense
 streaming tables. Compare equal Python/dependency environments and TSV hashes;

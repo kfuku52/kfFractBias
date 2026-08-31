@@ -18,12 +18,20 @@ env:
 
 jobs:
   unit:
-    name: Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os == 'macos-latest' && format('macOS Python {0}', matrix.python-version) || format('Python {0}', matrix.python-version) }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.11", "3.12", "3.13", "3.14"]
+        include:
+          - os: ubuntu-latest
+            python-version: "3.14"
+            extra: all
+          - os: macos-latest
+            python-version: "3.12"
+            extra: plot
 
     steps:
       - name: Check out repository
@@ -39,12 +47,12 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
-          cache-suffix: python-${{ matrix.python-version }}-unit
+          cache-suffix: python-${{ matrix.python-version }}-${{ runner.os }}-${{ matrix.extra || 'plot' }}-unit
           cache-dependency-glob: uv.lock
 
       - name: Install locked test environment
         run: |
-          uv sync --locked --extra test --extra plot
+          uv sync --locked --extra test --extra ${{ matrix.extra || 'plot' }}
 
       - name: Run unit tests
         run: uv run --no-sync python -m pytest -q

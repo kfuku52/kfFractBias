@@ -1,24 +1,11 @@
 import json
-import re
-import shlex
 import sys
-from pathlib import Path
 
 import pytest
 from test_run import compare_args, compare_inputs
 
 from kffractbias.cli import build_parser, main
 from kffractbias.jcvi import _run_checked, preflight_tools
-
-
-def test_readme_commands_parse_without_external_tools(monkeypatch):
-    monkeypatch.setattr("kffractbias.cli._path", Path)
-    parser = build_parser()
-    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
-    commands = re.findall(r"^kffractbias .+$", readme.replace("\\\n", " "), flags=re.MULTILINE)
-    assert len(commands) >= 5
-    for command in commands:
-        parser.parse_args(shlex.split(command.replace("\\\n", " "))[1:])
 
 
 def test_public_self_defaults_and_options():
@@ -94,3 +81,50 @@ def test_empty_fasta_header_is_a_cli_input_error(tmp_path, capsys):
         args.extend(("--" + label.replace("_", "-"), str(path)))
     assert main(args) == 2
     assert "Empty FASTA identifier" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("command", ["validate", "compare", "selfcompare"])
+@pytest.mark.parametrize(
+    "record,message",
+    [
+        ("\ttest\tmRNA\t1\t3\t.\t+\t.\tID=t1\n", "Empty GFF sequence identifier"),
+        ("chr1\ttest\tmRNA\t1\t3\t.\tINVALID\t.\tID=t1\n", "Invalid GFF strand"),
+        (
+            "chr1\ttest\tmRNA\t1\t3\t.\t+\t.\tID=t1\nchr1\ttest\tmRNA\t10\t12\t.\t-\t.\tID=t1\n",
+            "conflicting strands",
+        ),
+    ],
+)
+def test_invalid_gff_is_rejected_before_alignment(
+    tmp_path, monkeypatch, capsys, command, record, message
+):
+    def unexpected(*args, **kwargs):
+        pytest.fail("external alignment must not start for invalid annotation")
+
+    monkeypatch.setattr("kffractbias.jcvi.preflight_tools", unexpected)
+    monkeypatch.setattr("kffractbias.jcvi._run_checked", unexpected)
+    paths = compare_inputs(tmp_path)
+    paths["target_gff"].write_text(record)
+    output = tmp_path / "out"
+    if command == "compare":
+        args = compare_args(paths, output)
+    elif command == "selfcompare":
+        args = [
+            command,
+            "--cds",
+            str(paths["target_cds"]),
+            "--gff",
+            str(paths["target_gff"]),
+            "--depth",
+            "1",
+            "--output-dir",
+            str(output),
+            "--no-plot",
+        ]
+    else:
+        args = [command]
+        for label, path in paths.items():
+            args.extend(("--" + label.replace("_", "-"), str(path)))
+    assert main(args) == 2
+    assert message in capsys.readouterr().err
+    assert not list(output.glob("*.summary.json"))

@@ -14,6 +14,8 @@ The `master` branch is the source development line, identified by a `.dev`
 package version. The earlier `0.1.3` and `0.1.4` labels were untagged development
 milestones, not published GitHub releases. Install from this repository and
 record both `kffractbias version` and `git rev-parse HEAD` when reporting results.
+New summaries also record the package's Git revision/dirty state when available
+and a Python-source fingerprint, including for installations without Git.
 See the [migration guide](docs/migration.md) for changes from those snapshots.
 
 [Documentation](docs/README.md) covers calculation rules, input/output formats,
@@ -30,7 +32,7 @@ describe this offline CLI; the upstream CoGe Wiki describes the original web too
 - local JCVI MCscan and QUOTA-ALIGN execution
 - explicit target:query syntenic-depth quota
 - long-form gene and sliding-window TSV outputs
-- JSON provenance with input hashes and parameters
+- JSON provenance with input hashes, parameters, and source-code identity
 - non-interactive PDF and PNG plots
 
 After the software and its dependencies are installed, analysis does not need
@@ -274,7 +276,11 @@ synteny pair must survive selection, even when unmatched sequences are included.
 
 The summary schema records input and output SHA-256 hashes, input and selected
 gene counts, synteny record and duplicate counts, Python/platform/package
-versions, and JCVI/aligner versions when available. Inputs are hashed before
+versions, and JCVI/aligner versions when available. `runtime.source` records
+the import-time Git commit/dirty state and Python-source SHA-256 fingerprint;
+Git fields are null for a normal wheel installation. See the
+[source identity fields](docs/formats.md#source-identity) for scope and limitations.
+Inputs are hashed before
 any preparation and verified again before output commit. Each run reads fixed,
 private copies of its original inputs; source and prepared BED/CDS hashes are
 recorded separately. Dense TSV rows are streamed without removing zero rows.
@@ -342,6 +348,11 @@ when installed) run in CI and can be run locally with
 The full check builds and installs the wheel without runtime dependencies,
 then extracts and tests the sdist in a separate environment. CI caches uv
 downloads by Python version and lockfile and preserves required check names.
+The fast suite checks CLI examples and internal links in the README, docs, and
+examples, and runs the minimal and annotation-validation tutorials. Integration
+tests run the documented annotation comparisons with LAST and BLAST+ and check
+their exact pairs, row counts, and retention values. CI also runs the fast suite
+on macOS/Python 3.12 and installs the comparison extras on Linux/Python 3.14.
 Use `uv run --no-sync python scripts/benchmark.py --genes 10000 --queries 100`
 for a repeatable synthetic workload; `--trace-memory` measures allocations
 separately from uninstrumented timings.

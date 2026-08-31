@@ -80,6 +80,9 @@ def test_summary_records_hashes_runtime_and_parser_counts(tmp_path: Path) -> Non
     assert summary["counts"]["input_synteny_record_count"] == 2
     assert summary["counts"]["duplicate_synteny_pair_count"] == 1
     assert summary["runtime"]["python"]
+    source = summary["runtime"]["source"]
+    assert source["hash_format"] == "kffractbias-python-source-v1"
+    assert len(source["python_source_sha256"]) == 64
     assert (
         summary["output_sha256"]["genes"]
         == hashlib.sha256(result.genes_path.read_bytes()).hexdigest()

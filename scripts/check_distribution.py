@@ -12,12 +12,16 @@ import tempfile
 import tomllib
 from pathlib import Path
 
+from kffractbias.provenance import capture_source_metadata
+
 
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
     version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
     (wheel,) = (root / "dist").glob(f"kffractbias-{version}-*.whl")
     archive = root / "dist" / f"kffractbias-{version}.tar.gz"
+    expected_source = capture_source_metadata(root / "src" / "kffractbias")["python_source_sha256"]
+    assert expected_source is not None
     environment = {
         key: value
         for key, value in os.environ.items()
@@ -73,6 +77,10 @@ def main() -> None:
         summary = json.loads((work / "result" / "kffractbias.summary.json").read_text())
         assert summary["counts"]["synteny_pair_count"] > 0
         assert summary["program_version"] == version
+        source_identity = summary["runtime"]["source"]
+        assert source_identity["python_source_sha256"] == expected_source
+        assert source_identity["git_commit"] is None
+        assert source_identity["git_dirty"] is None
         with tarfile.open(archive) as source:
             source.extractall(work / "source", filter="data")
         (extracted,) = (work / "source").iterdir()
@@ -93,6 +101,10 @@ def main() -> None:
             "docs/troubleshooting.md",
         ):
             assert (extracted / path).is_file(), f"sdist missing {path}"
+        assert (
+            capture_source_metadata(extracted / "src" / "kffractbias")["python_source_sha256"]
+            == expected_source
+        )
         run(
             [
                 "uv",

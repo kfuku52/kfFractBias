@@ -7,8 +7,9 @@ import shutil
 from pathlib import Path
 
 import pytest
+from documentation import ANNOTATION_TUTORIAL, example_arguments, generate_annotation_inputs
 
-from kffractbias.cli import main
+from kffractbias.cli import build_parser, main
 from kffractbias.io import parse_synteny_pairs, read_bed
 
 pytestmark = pytest.mark.skipif(
@@ -53,46 +54,31 @@ def aligner(request):
     return request.param
 
 
-def test_compare_runs_jcvi_quota_align_offline(tmp_path, aligner):
-    target_cds, target_gff = write_genome(tmp_path, "t", ("target_chr",), 1)
-    query_cds, query_gff = write_genome(tmp_path, "q", ("query_a", "query_b"), 2)
-    output_dir = tmp_path / "output"
-    status = main(
-        [
-            "compare",
-            "--aligner",
-            aligner,
-            "--target-cds",
-            str(target_cds),
-            "--target-gff",
-            str(target_gff),
-            "--query-cds",
-            str(query_cds),
-            "--query-gff",
-            str(query_gff),
-            "--quota",
-            "1:2",
-            "--window-size",
-            "4",
-            "--output-dir",
-            str(output_dir),
-            "--prefix",
-            "synthetic",
-        ]
-    )
+def test_compare_runs_jcvi_quota_align_offline(tmp_path, aligner, monkeypatch):
+    generate_annotation_inputs(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    arguments = example_arguments(ANNOTATION_TUTORIAL, "compare")
+    # Also exercise the tutorial's documented variant that enables plots.
+    arguments.remove("--no-plot")
+    arguments.extend(("--aligner", aligner))
+    options = build_parser().parse_args(arguments)
+    target_cds, target_gff = options.target_cds, options.target_gff
+    query_cds, query_gff = options.query_cds, options.query_gff
+    output_dir, prefix = options.output_dir, options.prefix
+    status = main(arguments)
     assert status == 0
-    assert (output_dir / "synthetic.synteny" / "target.query.lifted.1x2.anchors").is_file()
-    assert (output_dir / "synthetic.genes.tsv").is_file()
-    assert (output_dir / "synthetic.windows.tsv").is_file()
-    assert (output_dir / "synthetic.summary.json").is_file()
-    assert (output_dir / "synthetic.plot.pdf").is_file()
-    assert (output_dir / "synthetic.plot.png").is_file()
-    summary = json.loads((output_dir / "synthetic.summary.json").read_text(encoding="utf-8"))
-    expected = {(f"t1_{i}", f"q{copy}_{i}") for i in range(1, 9) for copy in (1, 2)}
+    assert (output_dir / f"{prefix}.synteny" / "target.query.lifted.1x2.anchors").is_file()
+    assert (output_dir / f"{prefix}.genes.tsv").is_file()
+    assert (output_dir / f"{prefix}.windows.tsv").is_file()
+    assert (output_dir / f"{prefix}.summary.json").is_file()
+    assert (output_dir / f"{prefix}.plot.pdf").is_file()
+    assert (output_dir / f"{prefix}.plot.png").is_file()
+    summary = json.loads((output_dir / f"{prefix}.summary.json").read_text(encoding="utf-8"))
+    expected = {(f"target1_{i}", f"query{copy}_{i}") for i in range(1, 9) for copy in (1, 2)}
     assert (
         set(
             parse_synteny_pairs(
-                output_dir / "synthetic.synteny" / "target.query.lifted.1x2.anchors",
+                output_dir / f"{prefix}.synteny" / "target.query.lifted.1x2.anchors",
                 "jcvi",
                 {left for left, _ in expected},
                 {right for _, right in expected},
@@ -101,7 +87,8 @@ def test_compare_runs_jcvi_quota_align_offline(tmp_path, aligner):
         == expected
     )
     assert summary["counts"]["synteny_pair_count"] == 16
-    with (output_dir / "synthetic.windows.tsv").open() as handle:
+    assert summary["counts"]["gene_table_row_count"] == 16
+    with (output_dir / f"{prefix}.windows.tsv").open() as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
     assert len(rows) == 10
     assert all(row["retained_count"] == "4" and row["retention_fraction"] == "1" for row in rows)
@@ -126,8 +113,8 @@ def test_compare_runs_jcvi_quota_align_offline(tmp_path, aligner):
         path = Path(summary["inputs"][label]["path"])
         assert path.is_file()
         assert hashlib.sha256(path.read_bytes()).hexdigest() == summary["inputs"][label]["sha256"]
-    assert (output_dir / "synthetic.synteny" / "preflight.json").is_file()
-    assert len(list((output_dir / "synthetic.synteny" / "logs").glob("*.json"))) == (
+    assert (output_dir / f"{prefix}.synteny" / "preflight.json").is_file()
+    assert len(list((output_dir / f"{prefix}.synteny" / "logs").glob("*.json"))) == (
         3 if aligner == "blast" else 1
     )
     assert summary["metadata"]["synteny_generation"]["blast_task"] == (
@@ -135,43 +122,30 @@ def test_compare_runs_jcvi_quota_align_offline(tmp_path, aligner):
     )
 
 
-def test_selfcompare_runs_jcvi_quota_align_offline(tmp_path, aligner):
-    cds, gff = write_genome(tmp_path, "s", ("self_a", "self_b"), 2)
-    output_dir = tmp_path / "self-output"
-    status = main(
-        [
-            "selfcompare",
-            "--aligner",
-            aligner,
-            "--cds",
-            str(cds),
-            "--gff",
-            str(gff),
-            "--depth",
-            "1",
-            "--window-size",
-            "4",
-            "--output-dir",
-            str(output_dir),
-            "--prefix",
-            "synthetic-self",
-            "--no-plot",
-        ]
-    )
+def test_selfcompare_runs_jcvi_quota_align_offline(tmp_path, aligner, monkeypatch):
+    generate_annotation_inputs(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    arguments = example_arguments(ANNOTATION_TUTORIAL, "selfcompare")
+    arguments.extend(("--aligner", aligner))
+    options = build_parser().parse_args(arguments)
+    output_dir, prefix = options.output_dir, options.prefix
+    status = main(arguments)
     assert status == 0
-    assert (output_dir / "synthetic-self.synteny" / "self.self.lifted.1x1.anchors").is_file()
-    summary = json.loads((output_dir / "synthetic-self.summary.json").read_text(encoding="utf-8"))
+    assert (output_dir / f"{prefix}.synteny" / "self.self.lifted.1x1.anchors").is_file()
+    summary = json.loads((output_dir / f"{prefix}.summary.json").read_text(encoding="utf-8"))
     assert summary["analysis_mode"] == "self_synteny_retention"
     assert summary["counts"]["synteny_pair_count"] == 8
     assert summary["counts"]["interchromosomal_pair_count"] == 8
     assert summary["counts"]["intrachromosomal_pair_count"] == 0
+    assert summary["counts"]["directed_synteny_pair_count"] == 16
+    assert summary["counts"]["gene_table_row_count"] == 32
     assert summary["metadata"]["synteny_generation"]["tool_versions"]["jcvi"]
-    expected = {(f"s1_{i}", f"s2_{i}") for i in range(1, 9)}
+    expected = {(f"query1_{i}", f"query2_{i}") for i in range(1, 9)}
     identifiers = {gene for pair in expected for gene in pair}
     assert (
         set(
             parse_synteny_pairs(
-                output_dir / "synthetic-self.synteny" / "self.self.lifted.1x1.anchors",
+                output_dir / f"{prefix}.synteny" / "self.self.lifted.1x1.anchors",
                 "jcvi",
                 identifiers,
                 identifiers,
@@ -180,7 +154,7 @@ def test_selfcompare_runs_jcvi_quota_align_offline(tmp_path, aligner):
         )
         == expected
     )
-    with (output_dir / "synthetic-self.windows.tsv").open() as handle:
+    with (output_dir / f"{prefix}.windows.tsv").open() as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
     assert len(rows) == 20
     assert all(

@@ -7,6 +7,14 @@ untagged development milestones, not published release artifacts. See the
 
 ## Unreleased
 
+- Reject empty/invalid GFF and BED sequence IDs and strand values, and reject
+  opposite-strand segments for one mapped identifier with file/line diagnostics.
+  Preserve valid multi-segment CDS merging and normalize unknown strands.
+- Record import-time Git revision/dirty state and a Python-source fingerprint
+  in `runtime.source`; preserve source identity in Git-free wheel/sdist installs.
+- Check maintained Markdown examples and internal links automatically, run
+  tutorial examples in the existing numeric/integration checks, and add macOS
+  coverage plus comparison-extra installation on Python 3.14.
 - Identify the source development line as `0.2.0.dev0`, distinct from the old
   untagged 0.1.4 implementation; keep citation and lockfile versions in sync.
 - Complete source-install and release instructions, repair dependency guidance,

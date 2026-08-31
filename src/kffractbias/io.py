@@ -60,6 +60,17 @@ class SyntenyParseResult:
     duplicate_pair_count: int
 
 
+@dataclass(frozen=True)
+class _GffRecord:
+    seqid: str
+    feature: str
+    start: int
+    end: int
+    strand: str
+    attributes: dict[str, tuple[str, ...]]
+    line_number: int
+
+
 FEATURE_PRIORITY = ("mRNA", "transcript", "gene", "CDS")
 ATTRIBUTE_PRIORITY = (
     "ID",
@@ -202,9 +213,22 @@ def parse_attributes(value: str) -> dict[str, tuple[str, ...]]:
     return {key: tuple(values) for key, values in parsed.items()}
 
 
-def _iter_gff(
-    path: str | Path,
-) -> Iterator[tuple[str, str, int, int, str, dict[str, tuple[str, ...]]]]:
+def _validate_seqid(value: str, format_name: str, location: str) -> None:
+    if not value.strip():
+        raise ValueError(f"Empty {format_name} sequence identifier at {location}")
+    if any(
+        character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value
+    ):
+        raise ValueError(f"Invalid {format_name} sequence identifier at {location}")
+
+
+def _parse_strand(value: str, format_name: str, location: str) -> str:
+    if value not in {"+", "-", ".", "?"}:
+        raise ValueError(f"Invalid {format_name} strand {value!r} at {location}")
+    return "." if value == "?" else value
+
+
+def _iter_gff(path: str | Path) -> Iterator[_GffRecord]:
     with open_text(path) as handle:
         for line_number, line in enumerate(handle, start=1):
             if line.startswith("##FASTA"):
@@ -216,6 +240,8 @@ def _iter_gff(
                 raise ValueError(
                     f"Expected 9 GFF columns at {path}:{line_number}; found {len(columns)}"
                 )
+            _validate_seqid(columns[0], "GFF", f"{path}:{line_number}")
+            strand = _parse_strand(columns[6], "GFF", f"{path}:{line_number}")
             try:
                 start = int(columns[3]) - 1
                 end = int(columns[4])
@@ -223,7 +249,15 @@ def _iter_gff(
                 raise ValueError(f"Invalid GFF coordinates at {path}:{line_number}") from exc
             if start < 0 or end <= start:
                 raise ValueError(f"Invalid GFF interval at {path}:{line_number}")
-            yield columns[0], columns[2], start, end, columns[6], parse_attributes(columns[8])
+            yield _GffRecord(
+                columns[0],
+                columns[2],
+                start,
+                end,
+                strand,
+                parse_attributes(columns[8]),
+                line_number,
+            )
 
 
 def _select_gff_mapping(
@@ -240,15 +274,15 @@ def _select_gff_mapping(
     observed_features: set[str] = set()
     observed_attributes: set[str] = set()
 
-    for _seqid, row_feature, _start, _end, _strand, attrs in _iter_gff(gff_path):
-        observed_features.add(row_feature)
-        observed_attributes.update(attrs)
-        if row_feature not in features:
+    for row in _iter_gff(gff_path):
+        observed_features.add(row.feature)
+        observed_attributes.update(row.attributes)
+        if row.feature not in features:
             continue
         for candidate_attribute in attributes:
-            for candidate_id in attrs.get(candidate_attribute, ()):
+            for candidate_id in row.attributes.get(candidate_attribute, ()):
                 if candidate_id in fasta_ids:
-                    matches[(row_feature, candidate_attribute)].add(candidate_id)
+                    matches[(row.feature, candidate_attribute)].add(candidate_id)
 
     selected_pair, selected_matches = max(
         matches.items(),
@@ -276,25 +310,32 @@ def _mapped_gff_intervals(
     selected_matches: set[str],
 ) -> tuple[Gene, ...]:
     intervals: dict[str, Gene] = {}
-    for seqid, row_feature, start, end, strand, attrs in _iter_gff(gff_path):
-        if row_feature != selected_feature:
+    for row in _iter_gff(gff_path):
+        if row.feature != selected_feature:
             continue
-        for gene_id in attrs.get(selected_attribute, ()):
+        for gene_id in row.attributes.get(selected_attribute, ()):
             if gene_id not in selected_matches:
                 continue
             previous = intervals.get(gene_id)
             if previous is None:
-                intervals[gene_id] = Gene(seqid, start, end, gene_id, strand)
+                intervals[gene_id] = Gene(row.seqid, row.start, row.end, gene_id, row.strand)
             else:
-                if previous.seqid != seqid:
-                    raise ValueError(f"GFF identifier {gene_id!r} occurs on multiple sequences")
-                merged_strand = previous.strand if previous.strand == strand else "."
+                location = f"{gff_path}:{row.line_number}"
+                if previous.seqid != row.seqid:
+                    raise ValueError(
+                        f"GFF identifier {gene_id!r} occurs on multiple sequences at {location}"
+                    )
+                known_strands = {previous.strand, row.strand} - {"."}
+                if len(known_strands) > 1:
+                    raise ValueError(
+                        f"GFF identifier {gene_id!r} has conflicting strands at {location}"
+                    )
                 intervals[gene_id] = Gene(
-                    seqid,
-                    min(previous.start, start),
-                    max(previous.end, end),
+                    row.seqid,
+                    min(previous.start, row.start),
+                    max(previous.end, row.end),
                     gene_id,
-                    merged_strand,
+                    next(iter(known_strands), "."),
                 )
 
     return tuple(
@@ -311,7 +352,8 @@ def _annotation_loci(
     parents: dict[str, set[str]] = defaultdict(set)
     candidates: dict[str, set[str]] = defaultdict(set)
     known_loci: set[str] = set()
-    for _seqid, row_feature, _start, _end, _strand, attrs in _iter_gff(gff_path):
+    for row in _iter_gff(gff_path):
+        row_feature, attrs = row.feature, row.attributes
         row_ids = set(attrs.get("ID", ())) | set(attrs.get("transcript_id", ()))
         ancestors = set(attrs.get("gene_id", ())) or set(attrs.get("Parent", ()))
         known_loci.update(attrs.get("gene_id", ()))
@@ -421,8 +463,7 @@ def read_bed(path: str | Path) -> tuple[Gene, ...]:
             if len(columns) < 4:
                 raise ValueError(f"Expected at least 4 BED columns at {path}:{line_number}")
             gene_id = columns[3]
-            if not columns[0]:
-                raise ValueError(f"Empty BED sequence identifier at {path}:{line_number}")
+            _validate_seqid(columns[0], "BED", f"{path}:{line_number}")
             if not gene_id:
                 raise ValueError(f"Empty BED gene identifier at {path}:{line_number}")
             if gene_id in seen:
@@ -434,7 +475,9 @@ def read_bed(path: str | Path) -> tuple[Gene, ...]:
                 raise ValueError(f"Invalid BED coordinates at {path}:{line_number}") from exc
             if start < 0 or end <= start:
                 raise ValueError(f"Invalid BED interval at {path}:{line_number}")
-            strand = columns[5] if len(columns) >= 6 else "."
+            strand = _parse_strand(
+                columns[5] if len(columns) >= 6 else ".", "BED", f"{path}:{line_number}"
+            )
             genes.append(Gene(columns[0], start, end, gene_id, strand))
     if not genes:
         raise ValueError(f"No BED records found in {path}")
