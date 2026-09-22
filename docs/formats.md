@@ -22,12 +22,24 @@ headers/records, sequence before the first header, and other characters are
 errors. The parser checks syntax, not reading frames, translations, or
 biological correctness.
 
-GFF3/GTF uses standard annotation columns with one-based inclusive coordinates;
+GFF3/GTF requires exactly nine tab-delimited columns with one-based inclusive coordinates;
 prepared BED converts them to zero-based half-open coordinates. FASTA IDs must
 map to a selected feature/attribute pair. Automatic detection considers mRNA,
 transcript, gene, and CDS; explicit feature/attribute overrides must be paired.
 Pairwise overrides are `--target-feature`/`--target-attribute` and their query
 equivalents; selfcompare uses `--feature`/`--attribute`.
+
+Detection chooses the single feature/attribute pair matching the most distinct
+FASTA IDs, rather than combining matches from different pairs. Ties prefer
+features in the order mRNA, transcript, gene, CDS, then attributes in the order
+ID, Name, transcript_id, gene_id, protein_id, locus_tag, Parent, coge_fid.
+Matching is case-sensitive; annotation attribute values are percent-decoded.
+Missing selected attributes contribute no match. If the mapping threshold is
+explicitly lowered, unmatched FASTA records are omitted from prepared BED/CDS.
+Zero matches always fail, even with a lowered threshold.
+
+An embedded GFF3 `##FASTA` section ends annotation parsing; its sequences are
+not used as CDS input. Supply the separate CDS FASTA required by the command.
 
 Sequence IDs must be nonempty, must not start with `#`, and contain no literal
 whitespace or control characters. Strand must be `+`, `-`, `.`, or `?`; unknown `?` is normalized to
@@ -61,6 +73,11 @@ BED input is tab-delimited, with at least four columns:
 | 4 | gene ID | Nonempty, unique within that BED; follows the identifier restrictions above. |
 | 5 | score | Optional; not used in retention calculations. |
 | 6 | strand | Optional `+`, `-`, `.`, or `?`; absent or unknown `?` is stored as `.`. |
+
+Missing numeric coordinates (including `.`) are errors, not missing-value
+sentinels. Omit an optional strand column or use `.`/`?` for unknown strand;
+an empty sixth column is an error. IDs are matched literally and
+case-sensitively; there is no automatic prefix or transcript-suffix removal.
 
 Additional columns are not used. Multiple exons must not be supplied as
 separate BED rows with the same ID. The program orders rows; the input does not

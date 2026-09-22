@@ -93,6 +93,25 @@ and saved as `preflight.json` in the synteny directory.
 
 ## Commands
 
+Analysis options come from CLI arguments and built-in defaults; the CLI does
+not load a configuration file or environment-variable overrides for analysis
+parameters. Relative input/output paths are resolved from the current working
+directory, and `~` is expanded. `PATH` determines which external aligner is
+found. Use `kffractbias COMMAND --help` for the options accepted by each command.
+
+Unless specified, analyses write to the current directory with prefix
+`kffractbias`, use denominator `all`, and generate plots (requiring the plot
+extra). Window/step defaults and selection rules are in
+[calculation rules](docs/methods.md). Comparison commands default to one CPU,
+C-score 0.7, and LAST; quota/depth has no default and must be supplied.
+`--cscore` and `--minimum-mapping-fraction` accept values greater than zero and
+at most one, not percentages. `--self-hit-percent` instead uses (0, 100].
+
+The generic filenames in the command overview below are placeholders for your
+inputs. For commands with bundled or generated inputs, start with the
+[minimal example](examples/minimal/README.md) or
+[annotation tutorial](examples/annotations/README.md).
+
 ### Calculate from precomputed synteny
 
 `calculate` accepts a JCVI `.anchors` file or the legacy SynMap extended
@@ -261,6 +280,9 @@ and prefix. `calculate` does not require an overwrite flag. `--no-plot` omits
 new figures and removes any old PDF/PNG for that prefix on success. Use a new
 prefix or output directory to preserve an earlier result. `--force` on the
 comparison commands controls replacement of the synteny working directory.
+It starts a fresh alignment in private staging; it does not resume failed work
+or reuse a previous alignment cache. To reuse existing anchors, use the
+`calculate` commands below.
 
 `selfcompare` writes the same output set and records identity/mirror filtering,
 interchromosomal and intrachromosomal pair counts, symmetric depth, and the

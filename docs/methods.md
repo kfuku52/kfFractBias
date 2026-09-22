@@ -26,7 +26,10 @@ significance test or reconstruct missing ancestral loci.
 
 `--target-seqids` and `--query-seqids` accept comma-separated lists and can be
 repeated. `selfcompare --seqids` selects the same set on both axes. Exclusion
-regexes apply to both axes. Unknown sequence names or an empty selected genome
+regexes apply to both axes, using a search anywhere in the sequence name.
+Exclusion wins even for explicitly requested names. Repeated sequence options
+form a union, not a replacement, and their order does not set output order.
+Unknown sequence names or an empty selected genome
 are errors. Selection controls profiling; comparison alignment still uses the
 prepared genome inputs, so selecting fewer sequences does not itself reduce
 the alignment workload.
