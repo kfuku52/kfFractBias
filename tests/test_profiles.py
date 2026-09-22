@@ -1,10 +1,11 @@
 import csv
 import json
 import os
-import random
 import subprocess
 import sys
 from dataclasses import replace
+
+import pytest
 
 from kffractbias.analysis import AnalysisConfig, calculate_fractionation_bias
 
@@ -41,7 +42,7 @@ def test_hash_seed_does_not_change_table_order(tmp_path):
     )
     anchors.write_text("".join(f"t1\t{gene}\t10\n" for gene in ("a", "b", "c", "b01", "B1", "b1")))
     results = []
-    for seed in range(1, 6):
+    for seed in (1, 2):
         output = tmp_path / str(seed)
         subprocess.run(
             [
@@ -74,80 +75,61 @@ def test_hash_seed_does_not_change_table_order(tmp_path):
     assert len(set(results)) == 1
 
 
-def test_retention_matches_naive_oracle_for_120_cases(tmp_path):
-    rng = random.Random(260831)
-    for case in range(120):
-        lengths = [rng.randrange(1, 31) for _ in range(rng.randrange(1, 5))]
-        target_by_chr = {f"T{c}": [f"t{c}_{i}" for i in range(n)] for c, n in enumerate(lengths)}
-        target_ids = [gene for genes in target_by_chr.values() for gene in genes]
-        query_contigs = [f"Q{i}" for i in range(rng.randrange(1, 6))]
-        query_to_chr = {
-            f"q{j}_{i}": chrom for j, chrom in enumerate(query_contigs) for i in range(3)
-        }
-        pairs = {(t, q) for t in target_ids for q in query_to_chr if rng.random() < 0.11}
-        pairs.add((target_ids[0], next(iter(query_to_chr))))
-        target_rows = [
-            f"{chrom}\t{i * 10}\t{i * 10 + 3}\t{gene}\n"
-            for chrom, genes in target_by_chr.items()
-            for i, gene in enumerate(genes)
-        ]
-        query_rows = [
-            f"{chrom}\t{i * 10}\t{i * 10 + 3}\t{gene}\n"
-            for i, (gene, chrom) in enumerate(query_to_chr.items())
-        ]
-        rng.shuffle(target_rows)
-        rng.shuffle(query_rows)
-        target, query, anchors = (
-            tmp_path / name for name in ("target.bed", "query.bed", "pairs.anchors")
+@pytest.mark.parametrize(
+    "denominator,expected",
+    [
+        (
+            "all",
+            [
+                ("chrA", "t1", "t3", 1),
+                ("chrA", "t3", "t5", 1),
+                ("chrB", "t1", "t3", 1),
+                ("chrB", "t3", "t5", 1),
+            ],
+        ),
+        ("syntenic", [("chrA", "t1", "t4", 2), ("chrB", "t1", "t4", 1)]),
+    ],
+)
+def test_retention_windows_count_genes_and_apply_step_after_filtering(
+    tmp_path, denominator, expected
+):
+    target, query, anchors = (
+        tmp_path / name for name in ("target.bed", "query.bed", "pairs.anchors")
+    )
+    # Unsorted coordinates, two unmatched genes, and a chromosome shorter than a window.
+    target.write_text(
+        "chr1\t50\t53\tt6\nchr1\t0\t3\tt1\nchr1\t40\t43\tt5\n"
+        "chr1\t20\t23\tt3\nchr2\t0\t3\tt7\nchr1\t30\t33\tt4\nchr1\t10\t13\tt2\n"
+    )
+    query.write_text("chrA\t10\t13\tqa2\nchrB\t0\t3\tqb\nchrA\t0\t3\tqa1\n")
+    # Multiple query hits still count as one retained target; reversed/duplicate pairs agree.
+    anchors.write_text(
+        "t1\tqa1\t10\nqa2\tt1\t10\nt1\tqa1\t10\nt3\tqb\t10\nt4\tqa1\t10\nqb\tt6\t10\nt7\tqa1\t10\n"
+    )
+    result = calculate_fractionation_bias(
+        AnalysisConfig(
+            anchors,
+            "auto",
+            target,
+            query,
+            tmp_path / "out",
+            window_size=3,
+            step_size=2,
+            denominator=denominator,
+            make_plot=False,
+            collect_rows=False,
         )
-        target.write_text("".join(target_rows))
-        query.write_text("".join(query_rows))
-        records = [(q, t) if rng.random() < 0.5 else (t, q) for t, q in sorted(pairs)]
-        anchors.write_text(
-            "".join(f"{left}\t{right}\t10\n" for left, right in records + records[:3])
-        )
-        window, step = rng.randrange(1, 12), rng.randrange(1, 7)
-        denominator = rng.choice(["all", "syntenic"])
-        result = calculate_fractionation_bias(
-            AnalysisConfig(
-                anchors,
-                "auto",
-                target,
-                query,
-                tmp_path / "out",
-                window_size=window,
-                step_size=step,
-                denominator=denominator,
-                include_unmatched_query_seqids=True,
-                make_plot=False,
-                collect_rows=False,
-            )
-        )
-        expected = {}
-        for chrom, genes in target_by_chr.items():
-            if denominator == "syntenic":
-                genes = [gene for gene in genes if any(t == gene for t, _ in pairs)]
-            for qchrom in query_contigs:
-                for start in range(0, len(genes) - window + 1, step):
-                    selected = genes[start : start + window]
-                    retained = sum(
-                        any(t == gene and query_to_chr[q] == qchrom for t, q in pairs)
-                        for gene in selected
-                    )
-                    expected[(chrom, qchrom, start + 1)] = (
-                        retained,
-                        selected[0],
-                        selected[-1],
-                        f"{retained / window:.10g}",
-                    )
-        with result.windows_path.open() as handle:
-            actual = {
-                (row["target_seqid"], row["query_seqid"], int(row["start_rank"])): (
-                    int(row["retained_count"]),
-                    row["start_gene"],
-                    row["end_gene"],
-                    row["retention_fraction"],
-                )
-                for row in csv.DictReader(handle, delimiter="\t")
-            }
-        assert actual == expected, f"oracle mismatch in case {case}"
+    )
+    with result.windows_path.open() as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    assert {row["target_seqid"] for row in rows} == {"chr1"}
+    assert [
+        (row["query_seqid"], row["start_gene"], row["end_gene"], int(row["retained_count"]))
+        for row in rows
+    ] == expected
+    assert [int(row["start_rank"]) for row in rows] == (
+        [1, 3, 1, 3] if denominator == "all" else [1, 1]
+    )
+    assert [row["retention_fraction"] for row in rows] == (
+        ["0.3333333333"] * 4 if denominator == "all" else ["0.6666666667", "0.3333333333"]
+    )

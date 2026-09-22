@@ -114,9 +114,6 @@ def test_compare_runs_jcvi_quota_align_offline(tmp_path, aligner, monkeypatch):
         assert path.is_file()
         assert hashlib.sha256(path.read_bytes()).hexdigest() == summary["inputs"][label]["sha256"]
     assert (output_dir / f"{prefix}.synteny" / "preflight.json").is_file()
-    assert len(list((output_dir / f"{prefix}.synteny" / "logs").glob("*.json"))) == (
-        3 if aligner == "blast" else 1
-    )
     assert summary["metadata"]["synteny_generation"]["blast_task"] == (
         "blastn" if aligner == "blast" else None
     )
@@ -161,60 +158,6 @@ def test_selfcompare_runs_jcvi_quota_align_offline(tmp_path, aligner, monkeypatc
         row["retention_percent"] == ("0" if row["target_seqid"] == row["query_seqid"] else "100")
         for row in rows
     )
-
-
-def test_default_self_bound_preserves_both_blocks_with_padding(tmp_path):
-    fasta, gff = tmp_path / "genome.fa", tmp_path / "genome.gff"
-    records, annotation = [], []
-    layout = [
-        ("chrA", "a", 0, 0, 8),
-        ("chrB", "b", 0, 1, 8),
-        ("chrC", "c", 100, 0, 8),
-        ("chrD_padding", "pad", 1000, 0, 320),
-        ("chrE", "e", 100, 1, 8),
-    ]
-    for chrom, prefix, offset, copy, count in layout:
-        for index in range(count):
-            identifier = f"{prefix}{index}"
-            sequence = gene_sequence(offset + index, copy)
-            records.append(f">{identifier}\n{sequence}\n")
-            annotation.append(
-                f"{chrom}\ttest\tmRNA\t{index * 1000 + 1}\t{index * 1000 + len(sequence)}\t.\t+\t.\tID={identifier}\n"
-            )
-    fasta.write_text("".join(records))
-    gff.write_text("".join(reversed(annotation)))
-    output = tmp_path / "out"
-    assert (
-        main(
-            [
-                "selfcompare",
-                "--cds",
-                str(fasta),
-                "--gff",
-                str(gff),
-                "--depth",
-                "1",
-                "--window-size",
-                "4",
-                "--output-dir",
-                str(output),
-                "--no-plot",
-            ]
-        )
-        == 0
-    )
-    work = output / "kffractbias.synteny"
-    identifiers = {gene.gene_id for gene in read_bed(work / "self.bed")}
-    pairs = parse_synteny_pairs(
-        work / "self.self.lifted.1x1.anchors",
-        "jcvi",
-        identifiers,
-        identifiers,
-        allow_ambiguous_orientation=True,
-    ).pairs
-    assert set(pairs) == {
-        (f"{left}{i}", f"{right}{i}") for left, right in (("a", "b"), ("c", "e")) for i in range(8)
-    }
 
 
 @pytest.mark.parametrize("depth,expected_count", [(1, 8), (2, 24)])

@@ -79,6 +79,8 @@ def test_minimal_documented_command_produces_expected_retention(tmp_path, monkey
     assert main(arguments) == 0
     output = options.output_dir
     summary = json.loads((output / f"{options.prefix}.summary.json").read_text())
+    assert summary["parameters"]["denominator"] == "all"
+    assert summary["parameters"]["synteny_format"] == "jcvi"
     assert summary["counts"]["synteny_pair_count"] == 3
     assert summary["counts"]["gene_table_row_count"] == 8
     assert summary["counts"]["window_table_row_count"] == 6

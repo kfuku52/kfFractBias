@@ -1,5 +1,4 @@
 import csv
-import hashlib
 import json
 from pathlib import Path
 
@@ -35,33 +34,6 @@ def make_inputs(tmp_path):
 def read_tsv(path):
     with path.open(encoding="utf-8", newline="") as handle:
         return list(csv.DictReader(handle, delimiter="\t"))
-
-
-def test_calculate_writes_expected_retention_windows(tmp_path):
-    target, query, anchors = make_inputs(tmp_path)
-    result = calculate_fractionation_bias(
-        AnalysisConfig(
-            synteny_path=anchors,
-            synteny_format="jcvi",
-            target_bed=target,
-            query_bed=query,
-            output_dir=tmp_path / "out",
-            prefix="demo",
-            window_size=2,
-            make_plot=False,
-        )
-    )
-    rows = read_tsv(result.windows_path)
-    assert len(rows) == 6
-    chr_a = [float(row["retention_percent"]) for row in rows if row["query_seqid"] == "chrA"]
-    chr_b = [float(row["retention_percent"]) for row in rows if row["query_seqid"] == "chrB"]
-    assert chr_a == [100.0, 50.0, 0.0]
-    assert chr_b == [0.0, 50.0, 50.0]
-    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
-    assert summary["counts"]["synteny_pair_count"] == 3
-    assert summary["parameters"]["denominator"] == "all"
-    assert summary["parameters"]["synteny_format"] == "jcvi"
-    assert summary["parameters"]["requested_synteny_format"] == "jcvi"
 
 
 def test_syntenic_denominator_removes_unmatched_target_genes(tmp_path):
@@ -117,28 +89,6 @@ def test_invalid_exclusion_regex_is_reported_as_value_error(tmp_path):
                 make_plot=False,
             )
         )
-
-
-def test_additional_inputs_are_hashed_in_summary(tmp_path):
-    target, query, anchors = make_inputs(tmp_path)
-    source = write(tmp_path / "source.fa", ">gene1\nATG\n")
-    result = calculate_fractionation_bias(
-        AnalysisConfig(
-            synteny_path=anchors,
-            synteny_format="jcvi",
-            target_bed=target,
-            query_bed=query,
-            output_dir=tmp_path / "out",
-            window_size=2,
-            make_plot=False,
-            additional_inputs={"source_target_cds": source},
-        )
-    )
-    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
-    assert summary["inputs"]["source_target_cds"] == {
-        "path": str(source),
-        "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
-    }
 
 
 def test_self_synteny_removes_identity_and_mirrors_then_maps_both_directions(tmp_path):

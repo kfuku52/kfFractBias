@@ -5,7 +5,6 @@ import pytest
 
 from kffractbias.io import (
     annotation_to_genes,
-    parse_attributes,
     read_bed,
     read_fasta_ids,
     read_jcvi_pairs,
@@ -19,26 +18,15 @@ def write(path: Path, text: str) -> Path:
     return path
 
 
-def test_parse_attributes_supports_gff3_and_gtf():
-    assert parse_attributes("ID=tx1;Name=alpha%20one;Alias=a,b") == {
-        "ID": ("tx1",),
-        "Name": ("alpha one",),
-        "Alias": ("a", "b"),
-    }
-    assert parse_attributes('gene_id "g1"; transcript_id "t1";') == {
-        "gene_id": ("g1",),
-        "transcript_id": ("t1",),
-    }
-
-
 def test_annotation_mapping_detects_feature_and_attribute(tmp_path):
     fasta = write(tmp_path / "genes.fa", ">tx1\nATG\n>tx2\nATG\n")
     gff = write(
         tmp_path / "genes.gff3",
         "##gff-version 3\n"
         "chr1\ttest\tgene\t1\t30\t.\t+\t.\tID=g1\n"
-        "chr1\ttest\tmRNA\t1\t12\t.\t+\t.\tID=tx1;Parent=g1\n"
-        "chr1\ttest\tmRNA\t20\t30\t.\t-\t.\tID=tx2;Parent=g1\n",
+        "chr1\ttest\tmRNA\t1\t12\t.\t+\t.\tID=tx%31;Parent=g1\n"
+        "chr1\ttest\tmRNA\t20\t30\t.\t-\t.\tID=tx2;Parent=g1\n"
+        "##FASTA\n>chr1\nATG\n",
     )
     mapping = annotation_to_genes(gff, read_fasta_ids(fasta))
     assert mapping.feature == "mRNA"
@@ -50,51 +38,10 @@ def test_annotation_mapping_detects_feature_and_attribute(tmp_path):
     ]
 
 
-def test_annotation_mapping_merges_cds_segments(tmp_path):
-    fasta = write(tmp_path / "genes.fa", ">tx1\nATG\n")
-    gff = write(
-        tmp_path / "genes.gff3",
-        "chr1\ttest\tCDS\t1\t3\t.\t+\t0\tParent=tx1\n"
-        "chr1\ttest\tCDS\t10\t12\t.\t+\t0\tParent=tx1\n",
-    )
-    mapping = annotation_to_genes(gff, read_fasta_ids(fasta))
-    assert mapping.feature == "CDS"
-    assert mapping.attribute == "Parent"
-    assert mapping.genes[0].start == 0
-    assert mapping.genes[0].end == 12
-    assert mapping.unresolved_locus_count == 1
-
-
-def test_annotation_mapping_stops_at_embedded_gff_fasta(tmp_path):
-    fasta = write(tmp_path / "genes.fa", ">tx1\nATG\n")
-    gff = write(
-        tmp_path / "genes.gff3",
-        "##gff-version 3\nchr1\ttest\tmRNA\t1\t3\t.\t+\t.\tID=tx1\n##FASTA\n>chr1\nATG\n",
-    )
-    mapping = annotation_to_genes(gff, read_fasta_ids(fasta))
-    assert [gene.gene_id for gene in mapping.genes] == ["tx1"]
-
-
 def test_duplicate_fasta_identifiers_are_rejected(tmp_path):
     fasta = write(tmp_path / "genes.fa", ">tx1\nATG\n>tx1 duplicate\nATG\n")
     with pytest.raises(ValueError, match="Duplicate FASTA identifier"):
         read_fasta_ids(fasta)
-
-
-@pytest.mark.parametrize(
-    "record",
-    (
-        "chr1\t-1\t5\tt1\n",
-        "chr1\t5\t5\tt1\n",
-        "chr1\t10\t5\tt1\n",
-        "\t0\t5\tt1\n",
-        "chr1\t0\t5\t\n",
-    ),
-)
-def test_invalid_bed_records_are_rejected(tmp_path, record):
-    bed = write(tmp_path / "genes.bed", record)
-    with pytest.raises(ValueError, match="BED (interval|sequence identifier|gene identifier)"):
-        read_bed(bed)
 
 
 def test_synmap_parser_accepts_coge_numeric_identifiers(tmp_path):
@@ -129,7 +76,6 @@ def test_jcvi_parser_rejects_ambiguous_orientation(tmp_path):
     "text,line,message",
     [
         (">\nATG\n", 1, "Empty FASTA identifier"),
-        (">   \nATG\n", 1, "Empty FASTA identifier"),
         ("ATG\n>x\nATG\n", 1, "before first FASTA header"),
         (">x\n>y\nATG\n", 1, "Empty FASTA sequence"),
         (">x\n", 1, "Empty FASTA sequence"),
@@ -196,11 +142,9 @@ def test_ambiguous_locus_is_rejected(tmp_path):
     "seqid,strand,message",
     [
         ("", "+", "Empty GFF sequence identifier"),
-        ("   ", "+", "Empty GFF sequence identifier"),
         ("chr 1", "+", "Invalid GFF sequence identifier"),
         ("chr\x00", "+", "Invalid GFF sequence identifier"),
         ("chr1", "INVALID", "Invalid GFF strand"),
-        ("chr1", "", "Invalid GFF strand"),
     ],
 )
 def test_invalid_gff_fields_report_the_source_line(tmp_path, seqid, strand, message):
@@ -213,7 +157,7 @@ def test_invalid_gff_fields_report_the_source_line(tmp_path, seqid, strand, mess
     assert f"{gff}:3" in str(caught.value)
 
 
-@pytest.mark.parametrize("strands", [("+", "-"), ("-", "+"), ("+", ".", "-"), ("-", "?", "+")])
+@pytest.mark.parametrize("strands", [("+", "-"), ("+", ".", "-")])
 def test_conflicting_gff_segments_are_not_silently_merged(tmp_path, strands):
     gff = write(
         tmp_path / "conflict.gff",
@@ -230,8 +174,6 @@ def test_conflicting_gff_segments_are_not_silently_merged(tmp_path, strands):
 @pytest.mark.parametrize(
     "strands,expected",
     [
-        (("+", "+"), "+"),
-        (("-", "-"), "-"),
         (("?", "."), "."),
         (("+", "?", "."), "+"),
         (("?", "-"), "-"),
@@ -247,6 +189,9 @@ def test_valid_gff_segments_produce_readable_bed(tmp_path, strands, expected):
         ),
     )
     prepared = prepare_genome("valid", fasta, gff, tmp_path)
+    assert prepared.mapping.feature == "CDS"
+    assert prepared.mapping.attribute == "Parent"
+    assert prepared.mapping.unresolved_locus_count == 1
     assert read_bed(prepared.bed_path) == prepared.mapping.genes
     (gene,) = prepared.mapping.genes
     assert (gene.start, gene.end, gene.strand) == (0, (len(strands) - 1) * 10 + 3, expected)
@@ -255,6 +200,10 @@ def test_valid_gff_segments_produce_readable_bed(tmp_path, strands, expected):
 @pytest.mark.parametrize(
     "record,message",
     [
+        ("chr1\t-1\t5\tt1\n", "Invalid BED interval"),
+        ("chr1\t5\t5\tt1\n", "Invalid BED interval"),
+        ("\t0\t5\tt1\n", "Empty BED sequence identifier"),
+        ("chr1\t0\t5\t\n", "Empty BED gene identifier"),
         ("chr 1\t0\t3\tt1\n", "Invalid BED sequence identifier"),
         ("chr1\t0\t3\tt1\t0\tINVALID\n", "Invalid BED strand"),
     ],

@@ -27,9 +27,10 @@ ambiguous, and duplicate-input tests. Never commit biological input data,
 generated result directories, credentials, or local environments.
 
 Synteny tests assert known pair sets, depth, diagonal boundaries, and retention
-values, not just nonempty files. The fast suite includes a naive retention
-oracle, README CLI parsing, subprocess hash-seed checks, multiprocess locking,
-input mutation, source provenance, documentation examples/links, and
+values, not just nonempty files. The fast suite includes explicit retention
+expectations for windowing and denominator selection, README CLI parsing,
+subprocess hash-seed checks, multiprocess locking, input mutation, source
+provenance, documentation examples/links, and
 commit/rollback failure injection. The optional JCVI core
 tests do not require LAST. Use synthetic fixture generators for new tests.
 

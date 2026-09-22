@@ -64,6 +64,7 @@ def test_pairwise_analysis_rejects_overlapping_gene_identifiers(tmp_path: Path) 
 def test_summary_records_hashes_runtime_and_parser_counts(tmp_path: Path) -> None:
     target, query, anchors = inputs(tmp_path)
     anchors.write_text("t1\tq1\t10\nt1\tq1\t10\n", encoding="utf-8")
+    source = write(tmp_path / "source.fa", ">gene1\nATG\n")
     result = calculate_fractionation_bias(
         AnalysisConfig(
             synteny_path=anchors,
@@ -72,10 +73,15 @@ def test_summary_records_hashes_runtime_and_parser_counts(tmp_path: Path) -> Non
             query_bed=query,
             output_dir=tmp_path / "output",
             make_plot=False,
+            additional_inputs={"source_target_cds": source},
         )
     )
     summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
 
+    assert summary["inputs"]["source_target_cds"] == {
+        "path": str(source),
+        "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+    }
     assert summary["schema_version"] == 3
     assert summary["counts"]["input_synteny_record_count"] == 2
     assert summary["counts"]["duplicate_synteny_pair_count"] == 1

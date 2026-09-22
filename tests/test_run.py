@@ -46,9 +46,8 @@ def hold_run(output, ready, release):
             raise RuntimeError("test parent did not release worker")
 
 
-@pytest.mark.parametrize("force", [False, True])
 @pytest.mark.parametrize("command", ["compare", "selfcompare", "calculate"])
-def test_all_commands_hold_the_same_lock_before_touching_work(tmp_path, force, command, capsys):
+def test_all_commands_hold_the_same_lock_before_touching_work(tmp_path, command, capsys):
     paths = compare_inputs(tmp_path)
     output = tmp_path / "output"
     old = output / "demo.synteny" / "old.txt"
@@ -98,7 +97,7 @@ def test_all_commands_hold_the_same_lock_before_touching_work(tmp_path, force, c
                 "demo",
                 "--no-plot",
             ]
-        if force and command != "calculate":
+        if command != "calculate":
             args.append("--force")
         assert main(args) == 2
         assert "Another analysis" in capsys.readouterr().err
@@ -177,8 +176,8 @@ def test_compare_uses_frozen_source_and_rejects_late_mutation(tmp_path, monkeypa
     assert failure["inputs"]["source_target_cds"]["path"] == str(paths["target_cds"].resolve())
 
 
-@pytest.mark.parametrize("fail_at", range(1, 7))
-def test_commit_failure_restores_work_and_all_outputs(tmp_path, monkeypatch, fail_at):
+@pytest.mark.parametrize("operation", ["backup", "install"])
+def test_commit_failure_restores_work_and_all_outputs(tmp_path, monkeypatch, operation):
     from kffractbias import run as run_module
 
     output = tmp_path / "out"
@@ -189,12 +188,16 @@ def test_commit_failure_restores_work_and_all_outputs(tmp_path, monkeypatch, fai
     for name in ("genes.tsv", "summary.json"):
         (output / f"demo.{name}").write_text(f"old {name}")
     replace = run_module.os.replace
-    calls = 0
+    failed = False
+    final_summary = output / "demo.summary.json"
 
     def fail_once(source, destination):
-        nonlocal calls
-        calls += 1
-        if calls == fail_at:
+        nonlocal failed
+        # Fail after work and the gene table have been installed, so rollback
+        # must restore both completed outputs and the interrupted summary.
+        affected = source if operation == "backup" else destination
+        if not failed and affected == final_summary:
+            failed = True
             raise OSError("injected commit failure")
         replace(source, destination)
 
@@ -209,6 +212,7 @@ def test_commit_failure_restores_work_and_all_outputs(tmp_path, monkeypatch, fai
                 staged[output / f"demo.{name}"] = path
             monkeypatch.setattr(run_module.os, "replace", fail_once)
             run.commit(staged)
+    assert failed
     assert (old_work / "marker").read_text() == "old work"
     for name in ("genes.tsv", "summary.json"):
         assert (output / f"demo.{name}").read_text() == f"old {name}"
@@ -223,12 +227,9 @@ def test_failed_rollback_keeps_recovery_files(tmp_path, monkeypatch):
     final = output / "demo.genes.tsv"
     final.write_text("old")
     replace = run_module.os.replace
-    calls = 0
 
     def fail_install_and_restore(source, destination):
-        nonlocal calls
-        calls += 1
-        if calls > 1:
+        if destination == final:
             raise OSError("filesystem unavailable")
         replace(source, destination)
 

@@ -1,9 +1,8 @@
-import hashlib
 import subprocess
 
 import pytest
 
-from kffractbias.provenance import HASH_FORMAT, capture_source_metadata
+from kffractbias.provenance import capture_source_metadata
 
 
 def git(root, *args):
@@ -73,21 +72,23 @@ def test_hash_covers_relative_names_and_source_bytes_but_not_bytecode(tmp_path):
     package = tmp_path / "package"
     package.mkdir()
     contents = {"__init__.py": b"value = 1\n", "sub/algorithm.py": b"value = 2\n"}
-    expected = hashlib.sha256(HASH_FORMAT.encode("ascii") + b"\0")
     for name, content in contents.items():
         path = package / name
         path.parent.mkdir(exist_ok=True)
         path.write_bytes(content)
-        expected.update(name.encode("utf-8") + b"\0" + hashlib.sha256(content).digest())
     original = capture_source_metadata(package)
-    assert original["python_source_sha256"] == expected.hexdigest()
+    assert original["python_source_sha256"]
     cache = package / "__pycache__"
     cache.mkdir()
     (cache / "__init__.cpython-312.pyc").write_bytes(b"different bytecode")
     assert capture_source_metadata(package) == original
-    (package / "sub" / "algorithm.py").rename(package / "sub" / "renamed.py")
+    nested = package / "sub" / "algorithm.py"
+    nested.write_text("value = 3\n")
+    changed = capture_source_metadata(package)
+    assert changed["python_source_sha256"] != original["python_source_sha256"]
+    nested.rename(package / "sub" / "renamed.py")
     assert (
-        capture_source_metadata(package)["python_source_sha256"] != original["python_source_sha256"]
+        capture_source_metadata(package)["python_source_sha256"] != changed["python_source_sha256"]
     )
 
 

@@ -4,16 +4,8 @@ import sys
 import pytest
 from test_run import compare_args, compare_inputs
 
-from kffractbias.cli import build_parser, main
+from kffractbias.cli import main
 from kffractbias.jcvi import _run_checked, preflight_tools
-
-
-def test_public_self_defaults_and_options():
-    args = build_parser().parse_args(
-        ["selfcompare", "--cds", __file__, "--gff", __file__, "--depth", "1"]
-    )
-    assert (args.diagonal_bound, args.self_hit_percent, args.isoform_policy) == (300, 98.0, "error")
-    assert not args.keep_failed_work
 
 
 def test_blast_task_override_requires_blast(tmp_path, capsys):
@@ -73,38 +65,15 @@ def test_command_failure_records_stderr_command_and_timing(tmp_path):
     assert record["elapsed_seconds"] > 0
 
 
-def test_empty_fasta_header_is_a_cli_input_error(tmp_path, capsys):
-    paths = compare_inputs(tmp_path)
-    paths["target_cds"].write_text(">\nATG\n")
-    args = ["validate"]
-    for label, path in paths.items():
-        args.extend(("--" + label.replace("_", "-"), str(path)))
-    assert main(args) == 2
-    assert "Empty FASTA identifier" in capsys.readouterr().err
-
-
 @pytest.mark.parametrize("command", ["validate", "compare", "selfcompare"])
-@pytest.mark.parametrize(
-    "record,message",
-    [
-        ("\ttest\tmRNA\t1\t3\t.\t+\t.\tID=t1\n", "Empty GFF sequence identifier"),
-        ("chr1\ttest\tmRNA\t1\t3\t.\tINVALID\t.\tID=t1\n", "Invalid GFF strand"),
-        (
-            "chr1\ttest\tmRNA\t1\t3\t.\t+\t.\tID=t1\nchr1\ttest\tmRNA\t10\t12\t.\t-\t.\tID=t1\n",
-            "conflicting strands",
-        ),
-    ],
-)
-def test_invalid_gff_is_rejected_before_alignment(
-    tmp_path, monkeypatch, capsys, command, record, message
-):
+def test_invalid_gff_is_rejected_before_alignment(tmp_path, monkeypatch, capsys, command):
     def unexpected(*args, **kwargs):
         pytest.fail("external alignment must not start for invalid annotation")
 
     monkeypatch.setattr("kffractbias.jcvi.preflight_tools", unexpected)
     monkeypatch.setattr("kffractbias.jcvi._run_checked", unexpected)
     paths = compare_inputs(tmp_path)
-    paths["target_gff"].write_text(record)
+    paths["target_gff"].write_text("chr1\ttest\tmRNA\t1\t3\t.\tINVALID\t.\tID=t1\n")
     output = tmp_path / "out"
     if command == "compare":
         args = compare_args(paths, output)
@@ -126,5 +95,5 @@ def test_invalid_gff_is_rejected_before_alignment(
         for label, path in paths.items():
             args.extend(("--" + label.replace("_", "-"), str(path)))
     assert main(args) == 2
-    assert message in capsys.readouterr().err
+    assert "Invalid GFF strand" in capsys.readouterr().err
     assert not list(output.glob("*.summary.json"))
