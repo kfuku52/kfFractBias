@@ -60,7 +60,7 @@ def test_compare_runs_jcvi_quota_align_offline(tmp_path, aligner, monkeypatch):
     arguments = example_arguments(ANNOTATION_TUTORIAL, "compare")
     # Also exercise the tutorial's documented variant that enables plots.
     arguments.remove("--no-plot")
-    arguments.extend(("--aligner", aligner))
+    arguments.extend(("--aligner", aligner, "--max-output-rows", "26"))
     options = build_parser().parse_args(arguments)
     target_cds, target_gff = options.target_cds, options.target_gff
     query_cds, query_gff = options.query_cds, options.query_gff
@@ -123,7 +123,7 @@ def test_selfcompare_runs_jcvi_quota_align_offline(tmp_path, aligner, monkeypatc
     generate_annotation_inputs(tmp_path)
     monkeypatch.chdir(tmp_path)
     arguments = example_arguments(ANNOTATION_TUTORIAL, "selfcompare")
-    arguments.extend(("--aligner", aligner))
+    arguments.extend(("--aligner", aligner, "--max-output-rows", "52"))
     options = build_parser().parse_args(arguments)
     output_dir, prefix = options.output_dir, options.prefix
     status = main(arguments)

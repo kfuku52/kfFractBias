@@ -7,6 +7,15 @@ untagged development milestones, not published release artifacts. See the
 
 ## Unreleased
 
+- Count overlapping arms of the same self-synteny block separately in depth
+  constraints, with interval-coverage oracle and default-bound regressions.
+- Reject gene IDs that collide with comments or ID-list/format delimiters,
+  with consistent FASTA, mapped GFF, and BED diagnostics.
+- Add `validate --pairwise`, exact output row counts and `--max-output-rows`,
+  and successful CLI elapsed time including commit and cleanup.
+- Adapt JCVI 1.6.6 quota help strings for Python 3.14 argparse and exercise
+  real LAST/BLAST comparisons on Python 3.12 and 3.14 in CI.
+
 - Reject empty/invalid GFF and BED sequence IDs and strand values, and reject
   opposite-strand segments for one mapped identifier with file/line diagnostics.
   Preserve valid multi-segment CDS merging and normalize unknown strands.

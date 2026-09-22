@@ -103,6 +103,11 @@ coordinates use the standard zero-based, half-open convention. Target and
 query gene identifier sets must be disjoint for pairwise analysis so pair
 orientation cannot be guessed incorrectly.
 
+Gene IDs in FASTA, mapped GFF attributes, and BED must not start with `#` or
+contain whitespace, control characters, `;`, or `||`. These characters conflict
+with comments, output ID lists, or SynMap delimiters and are rejected with the
+source line instead of silently dropping or merging identifiers.
+
 ```bash
 kffractbias calculate \
   --synteny target.query.lifted.1x2.anchors \
@@ -195,6 +200,8 @@ combine both arms on the same genome, including regions that appear on the
 query side of one block and the target side of another. Block intervals use
 inclusive gene ranks without an overlap tolerance. It must be chosen
 from the expected homeologous structure rather than inferred automatically.
+If both arms of one block overlap on the same chromosome, their overlap counts
+twice toward depth; such a block cannot be selected at depth 1.
 The default `--self-hit-percent 98` is JCVI's near-self identity cutoff and can
 be changed for unusually recent polyploidy. The default `--diagonal-bound 300`
 excludes intrachromosomal anchors whose gene-rank difference is **less than**
@@ -211,13 +218,16 @@ therefore not equivalent to outgroup-based fractionation bias from `compare`.
 ### Validate annotations
 
 ```bash
-kffractbias validate \
+kffractbias validate --pairwise \
   --target-cds target.cds.fa --target-gff target.gff3 \
   --query-cds query.cds.fa --query-gff query.gff3
 ```
 
 Use `--target-feature` with `--target-attribute`, and the corresponding query
 options, when automatic GFF identifier detection is not appropriate.
+`--pairwise` additionally checks that selected target/query IDs are disjoint,
+as required by `compare`. Omit it to validate mappings for self-comparison or
+to check each annotation independently. Validation does not run alignment.
 `validate` also checks FASTA headers, duplicate identifiers, nonempty sequences,
 and nucleotide IUPAC characters. Wrapped, lowercase, and gzip-compressed FASTA
 are accepted; it does not validate translation, reading frame, or annotation
@@ -274,6 +284,12 @@ query sequences. An explicit `--query-seqids` selection also includes its
 unmatched sequences; `--seqids` does the same for self-comparison. At least one
 synteny pair must survive selection, even when unmatched sequences are included.
 
+All analysis commands print the exact gene/window row counts before writing
+tables. Set `--max-output-rows N` to limit their combined data rows (excluding
+headers); exceeding the limit fails without replacing earlier results. On
+comparison commands, the pre-alignment upper bound is advisory: the limit is
+checked against the actual profile after alignment and filtering.
+
 The summary schema records input and output SHA-256 hashes, input and selected
 gene counts, synteny record and duplicate counts, Python/platform/package
 versions, and JCVI/aligner versions when available. `runtime.source` records
@@ -304,6 +320,10 @@ commands, exit codes, and elapsed times in `PREFIX.synteny/logs/`; stage timings
 are recorded in the summary. Recovery files are always retained if rollback
 itself fails. These directories can contain genomic data; remove them manually
 after diagnosis when they are no longer needed.
+
+Successful CLI analyses also print total elapsed seconds, including output
+commit and cleanup. Summary stage times can overlap (preflight is inside
+synteny) and exclude commit; they must not be summed as total elapsed time.
 
 To change the window, sequence selection, or plotting without rerunning an
 expensive pairwise alignment, reuse the retained inputs with a new prefix:
@@ -353,6 +373,8 @@ examples, and runs the minimal and annotation-validation tutorials. Integration
 tests run the documented annotation comparisons with LAST and BLAST+ and check
 their exact pairs, row counts, and retention values. CI also runs the fast suite
 on macOS/Python 3.12 and installs the comparison extras on Linux/Python 3.14.
+Real LAST/BLAST integration runs on Linux/Python 3.12 and 3.14; the local JCVI
+adapter normalizes legacy quota help text for Python 3.14 argument validation.
 Use `uv run --no-sync python scripts/benchmark.py --genes 10000 --queries 100`
 for a repeatable synthetic workload; `--trace-memory` measures allocations
 separately from uninstrumented timings.

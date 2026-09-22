@@ -1,5 +1,6 @@
 import csv
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -142,3 +143,31 @@ def test_self_synteny_requires_identical_bed_coordinates(tmp_path):
                 make_plot=False,
             )
         )
+
+
+def test_output_limit_checks_exact_combined_rows_before_replacing_results(tmp_path, capsys):
+    target, query, anchors = make_inputs(tmp_path)
+    config = AnalysisConfig(
+        anchors,
+        "jcvi",
+        target,
+        query,
+        tmp_path / "out",
+        window_size=2,
+        make_plot=False,
+        max_output_rows=14,
+    )
+    result = calculate_fractionation_bias(config)
+    before = {
+        path: path.read_bytes()
+        for path in (result.genes_path, result.windows_path, result.summary_path)
+    }
+    with pytest.raises(ValueError, match="requires 14 rows.*max-output-rows 13"):
+        calculate_fractionation_bias(replace(config, max_output_rows=13))
+    assert {path: path.read_bytes() for path in before} == before
+    assert "8 gene rows, 6 window rows" in capsys.readouterr().err
+    result = calculate_fractionation_bias(
+        replace(config, denominator="syntenic", max_output_rows=10)
+    )
+    assert len(result.gene_rows) + len(result.window_rows) == 10
+    assert json.loads(result.summary_path.read_text())["parameters"]["max_output_rows"] == 10

@@ -31,6 +31,10 @@ are errors. Selection controls profiling; comparison alignment still uses the
 prepared genome inputs, so selecting fewer sequences does not itself reduce
 the alignment workload.
 
+`validate --pairwise` checks the selected identifiers for the same target/query
+disjointness required by `compare`. Without that flag, validation checks each
+CDS/annotation mapping independently and also permits self-comparison inputs.
+
 All synteny data rows are parsed against the complete BED identifier sets
 before sequence filtering. A malformed or unknown-ID row outside the selected
 sequences is therefore still an error.
@@ -92,6 +96,12 @@ reduces window rows, but not gene rows. Narrowing sequence selection can reduce
 both. The pre-alignment estimate is an upper bound because final retained
 pairs and denominator filtering may reduce the actual output.
 
+Every analysis prints exact row counts before writing tables. The optional
+`--max-output-rows N` limits gene rows plus window rows, excluding headers.
+It is checked against the final profile, not the pre-alignment upper bound,
+so filtering can bring an analysis below the limit. Exceeding it preserves
+existing results. There is no limit unless this option is supplied.
+
 CLI runs stream rows. The Python API collects result rows by default; use
 `AnalysisConfig(collect_rows=False, ...)` for streaming without returned row
 tuples. PDF plots include all panels, at most 12 query sequences per panel and
@@ -116,6 +126,9 @@ upstream identity, C-score, and tandem filtering remain independent.
 same genome. Block intervals use inclusive gene ranks without an overlap
 tolerance. It does not allow a region to exceed depth N by appearing on
 different axes in different blocks.
+Both arms of the same block also contribute separately where they overlap;
+an overlapping intrachromosomal block requires depth at least 2. Adjacent
+intervals that do not share a gene rank do not overlap.
 
 The result is `self_synteny_retention`, conditional on extant annotated genes.
 It cannot observe an ancestral locus when every descendant copy was lost, so

@@ -13,7 +13,15 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from . import __version__
-from .io import Gene, detect_synteny_format, natural_key, parse_synteny_pairs, read_bed, sha256_file
+from .io import (
+    Gene,
+    detect_synteny_format,
+    natural_key,
+    parse_synteny_pairs,
+    read_bed,
+    sha256_file,
+    validate_disjoint_identifiers,
+)
 from .profiles import GENE_FIELDS, WINDOW_FIELDS, GeneRow, RetentionProfile, WindowRow
 from .provenance import source_metadata
 from .run import RunContext, analysis_run, output_paths, validate_prefix, validate_separation
@@ -42,6 +50,7 @@ class AnalysisConfig:
     keep_failed_work: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
     additional_inputs: dict[str, Path] = field(default_factory=dict)
+    max_output_rows: int | None = None
 
 
 @dataclass(frozen=True)
@@ -118,6 +127,8 @@ def _validate_config(config: AnalysisConfig) -> None:
         raise ValueError("window size must be at least 1")
     if config.step_size < 1:
         raise ValueError("step size must be at least 1")
+    if config.max_output_rows is not None and config.max_output_rows < 1:
+        raise ValueError("maximum output rows must be at least 1")
     if config.denominator not in {"all", "syntenic"}:
         raise ValueError("denominator must be 'all' or 'syntenic'")
     if config.analysis_mode not in {"pairwise_fractionation_bias", "self_synteny_retention"}:
@@ -165,13 +176,7 @@ def _validate_pairwise_identifiers(
 ) -> None:
     if analysis_mode != "pairwise_fractionation_bias":
         return
-    overlapping_ids = set(target_by_id).intersection(query_by_id)
-    if overlapping_ids:
-        examples = ", ".join(sorted(overlapping_ids, key=natural_key)[:10])
-        raise ValueError(
-            "Pairwise target and query BED gene identifiers must be disjoint; "
-            f"found {len(overlapping_ids)} overlapping identifier(s), including: {examples}"
-        )
+    validate_disjoint_identifiers(target_by_id, query_by_id, "BED gene")
 
 
 def _select_filtered_pairs(
@@ -369,6 +374,16 @@ def _calculate(
             target_by_seqid, ordered_query_seqids, mappings, config.window_size, config.step_size
         )
     gene_count, window_count = profile.row_counts()
+    print(
+        f"kffractbias: dense output: {gene_count:,} gene rows, {window_count:,} window rows",
+        file=sys.stderr,
+    )
+    if config.max_output_rows is not None and gene_count + window_count > config.max_output_rows:
+        raise ValueError(
+            f"Dense output requires {gene_count + window_count:,} rows, "
+            f"exceeding --max-output-rows {config.max_output_rows:,}; "
+            "narrow sequence selection or increase the limit"
+        )
     staging_dir = run.staging_dir
     staged_genes = staging_dir / outputs["genes"].name
     staged_windows = staging_dir / outputs["windows"].name
@@ -425,6 +440,7 @@ def _calculate(
             "query_seqids": ordered_query_seqids,
             "exclude_seqid_regex": config.exclude_seqid_regex,
             "include_unmatched_query_seqids": config.include_unmatched_query_seqids,
+            "max_output_rows": config.max_output_rows,
         },
         "counts": {
             "input_target_gene_count": len(all_target_genes),

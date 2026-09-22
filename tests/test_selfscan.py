@@ -1,3 +1,4 @@
+from itertools import combinations
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,59 @@ def test_solver_enforces_depth_across_both_axes():
     blocks = [[(i + a, i + b, 200) for i in range(8)] for a, b in ((0, 8), (0, 16), (8, 16))]
     assert len(select_quota(blocks, genes, 1)) == 1
     assert select_quota(blocks, genes, 2) == [0, 1, 2]
+
+
+@pytest.mark.parametrize("depth", [1, 2, 3])
+def test_quota_matches_exhaustive_interval_coverage(depth):
+    pytest.importorskip("jcvi")
+    genes = tuple(Gene("chr1", i, i + 1, f"g{i}") for i in range(20))
+    blocks = [
+        [(i, i + 4, 200) for i in range(8)],
+        [(i, i + 12, 200) for i in range(4)],
+        [(i, i + 8, 200) for i in range(4, 8)],
+        [(i, i + 4, 200) for i in range(12, 16)],
+    ]
+
+    def feasible(selected):
+        coverage = [0] * len(genes)
+        for index in selected:
+            for axis in (0, 1):
+                positions = [point[axis] for point in blocks[index]]
+                for rank in range(min(positions), max(positions) + 1):
+                    coverage[rank] += 1
+        return max(coverage) <= depth
+
+    def score(selected):
+        return sum(len(blocks[index]) for index in selected)
+
+    expected = max(
+        score(selected)
+        for count in range(len(blocks) + 1)
+        for selected in combinations(range(len(blocks)), count)
+        if feasible(selected)
+    )
+    selected = select_quota(blocks, genes, depth)
+    assert feasible(selected)
+    assert score(selected) == expected
+
+
+def test_scan_rejects_overlapping_arms_at_depth_one(tmp_path):
+    pytest.importorskip("jcvi")
+    genes = tuple(Gene("chr1", i, i + 1, f"g{i}") for i in range(701))
+    bed = tmp_path / "self.bed"
+    write_bed(genes, bed)
+    pairs = [(f"g{i}", f"g{i + 300}") for i in range(401)]
+    blast = alignment(tmp_path / "hits.last", pairs)
+    output = tmp_path / "self.anchors"
+    with pytest.raises(ValueError, match="No self-synteny blocks survived QUOTA-ALIGN"):
+        scan_self(blast, blast, bed, output, bound=300, depth=1)
+    scan_self(blast, blast, bed, output, bound=300, depth=2)
+    identifiers = {gene.gene_id for gene in genes}
+    assert set(
+        parse_synteny_pairs(
+            output, "jcvi", identifiers, identifiers, allow_ambiguous_orientation=True
+        ).pairs
+    ) == set(pairs)
 
 
 @pytest.mark.parametrize("distance,expected", [(299, 0), (300, 4)])

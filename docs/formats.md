@@ -6,6 +6,13 @@ ignored in BED and synteny input. See [calculation rules](methods.md) for the
 meaning of retention and the [minimal example](../examples/minimal/README.md)
 for a complete runnable dataset.
 
+Gene identifiers in FASTA, mapped annotation attributes (after decoding), and
+BED must not start with `#` or contain whitespace, control characters, `;`, or
+`||`. This keeps comment detection and semicolon-separated `query_genes`
+unambiguous and avoids collision with SynMap format detection. Invalid IDs
+are rejected with a source path and line number. FASTA description text after
+the identifier is still allowed.
+
 **CDS FASTA and annotations**
 
 FASTA identifiers are the first whitespace-delimited token after `>`. They
@@ -22,8 +29,8 @@ transcript, gene, and CDS; explicit feature/attribute overrides must be paired.
 Pairwise overrides are `--target-feature`/`--target-attribute` and their query
 equivalents; selfcompare uses `--feature`/`--attribute`.
 
-Sequence IDs must be nonempty and contain no literal whitespace or control
-characters. Strand must be `+`, `-`, `.`, or `?`; unknown `?` is normalized to
+Sequence IDs must be nonempty, must not start with `#`, and contain no literal
+whitespace or control characters. Strand must be `+`, `-`, `.`, or `?`; unknown `?` is normalized to
 `.` in prepared BED. These checks apply to every annotation row, even if a
 different feature is selected. See the
 [GFF3 specification](https://github.com/The-Sequence-Ontology/Specifications/blob/master/gff3.md)
@@ -48,10 +55,10 @@ BED input is tab-delimited, with at least four columns:
 
 | Position | Field | Requirement |
 | --- | --- | --- |
-| 1 | sequence ID | Nonempty chromosome/contig name, without whitespace or control characters. |
+| 1 | sequence ID | Nonempty chromosome/contig name, not starting with `#`, without whitespace or control characters. |
 | 2 | start | Integer, zero-based, at least zero. |
 | 3 | end | Integer, exclusive endpoint, greater than start. |
-| 4 | gene ID | Nonempty, unique within that BED. |
+| 4 | gene ID | Nonempty, unique within that BED; follows the identifier restrictions above. |
 | 5 | score | Optional; not used in retention calculations. |
 | 6 | strand | Optional `+`, `-`, `.`, or `?`; absent or unknown `?` is stored as `.`. |
 
@@ -154,12 +161,12 @@ the schema. Consumers should use field names rather than JSON member order.
 | analysis_mode | `pairwise_fractionation_bias` or `self_synteny_retention`. |
 | target_name, query_name | User-facing genome labels. |
 | runtime | Python/platform, installed package versions, and source identity; unavailable optional packages are null. |
-| parameters | Window/step, denominator, resolved and requested synteny formats, resolved sequence lists, exclusion regex, unmatched-query flag. |
+| parameters | Window/step, denominator, resolved and requested synteny formats, resolved sequence lists, exclusion regex, unmatched-query flag, max_output_rows (combined data-row limit or null). |
 | counts | Input, selected, analyzed, pair, and output-row counts described below. |
 | inputs | Input labels mapped to original/final prepared paths and raw-file SHA-256 hashes. Source FASTA/GFF and prepared BED/CDS are recorded separately for comparisons. |
 | outputs | genes/windows TSV and PDF/PNG paths; plot paths are null when plotting is off. |
 | output_sha256 | SHA-256 of the TSV/plot files; plot hashes are null when plotting is off. The summary does not hash itself. |
-| timings_seconds | Measured stage times. Nested synteny/preflight stages overlap; do not sum them as elapsed wall time. The successful summary is written before commit, so it does not include commit time. |
+| timings_seconds | Measured stage times. Nested synteny/preflight stages overlap; do not sum them as elapsed wall time. The successful summary is written before commit, so it does not include commit time. The CLI prints total elapsed time including commit and cleanup on success. |
 | plot | Page/panel counts and limits, including png_page 1; empty when plotting is off. |
 | metadata | Comparison-generation details, tools, quota, annotation mapping, and self interpretation where applicable; empty for a basic pairwise calculate run. |
 

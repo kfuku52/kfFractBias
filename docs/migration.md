@@ -28,11 +28,14 @@ for what the fingerprint covers and why an installed wheel's Git fields are null
 | Python 3.9+ in the old metadata | Use Python 3.11+ on Linux/macOS with a local POSIX output filesystem. |
 | JCVI and matplotlib installed as base dependencies | Select plot or compare/all extras as described in the [README](../README.md). Base calculate needs `--no-plot`. |
 | The same gene IDs used in two genomes | Pairwise IDs must be disjoint. Prefix IDs consistently in each genome's FASTA/GFF/BED/anchors; do not rename only one file. |
+| Gene IDs starting with `#` or containing whitespace, control characters, semicolons, or double pipes | These IDs are now rejected before analysis. Rename them consistently in FASTA/GFF/BED/anchors to avoid comment and delimiter ambiguity. |
+| `validate` success treated as pairwise readiness | Add `--pairwise` to check disjoint selected IDs. Mapping-only validation still permits self-comparison inputs. |
 | Partial CDS-to-annotation mapping accepted | Mapping defaults to 100%. Inspect the missing IDs first; use an explicit minimum fraction only if loss is intentional. |
 | Multiple transcript IDs counted as independent genes | Choose representative input or `--isoform-policy longest`; use `all` only when identifier-level counting is intended. |
 | Empty sequence names, arbitrary strand values, or opposite-strand segments silently accepted | Correct the annotation/BED fields. Unknown `?` is normalized to `.`, and conflicting known strands for one mapped ID are rejected. |
 | Malformed synteny rows silently skipped | Every data row must have valid structure and resolve to the supplied BEDs, even if its sequence is later excluded. |
 | Native JCVI self filtering and quota behavior | The chromosome-aware adapter fixes interchromosomal filtering and shares self depth constraints across both axes. Regenerate old self anchors to obtain these corrections. |
+| Overlapping arms of one self block counted once | Both arms now count toward depth in their shared interval. Regenerate self anchors; depth 1 rejects such blocks. |
 | Native BLAST search-task defaults | BLAST searches explicitly use `blastn`; overrides are recorded. Regenerate anchors if the old task missed divergent matches. |
 | One PNG represents the entire analysis | PNG shows only the first PDF page. Use the PDF for every chromosome/query panel. |
 | Legacy Python 2 scripts, notebooks, and bundled biological datasets in the checkout | They remain in [the pre-removal Git tree](https://github.com/kfuku52/kfFractBias/tree/af8130640d3d097b8038b291b9dd40e6a6d5050e). Current examples use small synthetic data. |

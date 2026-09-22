@@ -12,7 +12,7 @@ No external data download or CoGe access is needed.
 
 ```bash
 python scripts/generate_example.py --output-dir annotation-inputs
-kffractbias validate \
+kffractbias validate --pairwise \
   --target-cds annotation-inputs/target.cds.fa \
   --target-gff annotation-inputs/target.gff3 \
   --query-cds annotation-inputs/query.cds.fa \
@@ -24,6 +24,7 @@ generate another copy; it does not overwrite input files. Without environment
 activation, prefix the Python and kffractbias commands with `uv run --no-sync`.
 Validation should map all 8 target and 16 query identifiers, with no collapsed
 isoforms or unresolved loci. Validation itself needs no aligner or JCVI.
+The `--pairwise` check also verifies disjoint selected target/query identifiers.
 
 **Pairwise comparison**
 

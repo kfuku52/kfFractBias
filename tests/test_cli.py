@@ -10,7 +10,7 @@ def write(path: Path, text: str) -> Path:
     return path
 
 
-def test_calculate_reuses_self_anchors_without_alignment(tmp_path):
+def test_calculate_reuses_self_anchors_without_alignment(tmp_path, capsys):
     import json
 
     bed = write(tmp_path / "self.bed", "chr1\t0\t3\tg1\nchr2\t0\t3\tg2\n")
@@ -32,6 +32,8 @@ def test_calculate_reuses_self_anchors_without_alignment(tmp_path):
                 "--window-size",
                 "1",
                 "--no-plot",
+                "--max-output-rows",
+                "8",
             ]
         )
         == 0
@@ -41,6 +43,10 @@ def test_calculate_reuses_self_anchors_without_alignment(tmp_path):
     assert summary["counts"]["synteny_pair_count"] == 1
     assert summary["counts"]["directed_synteny_pair_count"] == 2
     assert "not an outgroup-based" in summary["metadata"]["interpretation"]
+    stderr = capsys.readouterr().err
+    assert "4 gene rows, 4 window rows" in stderr
+    assert "completed in" in stderr
+    assert "including commit and cleanup" in stderr
 
 
 def test_formats_cli(capsys):
@@ -55,6 +61,7 @@ def test_formats_cli(capsys):
     (
         ("--window-size", "0"),
         ("--step-size", "-1"),
+        ("--max-output-rows", "0"),
         ("--exclude-seqid-regex", "["),
     ),
 )

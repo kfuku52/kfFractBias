@@ -1,5 +1,6 @@
 import gzip
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 
@@ -213,3 +214,32 @@ def test_invalid_bed_fields_report_the_source_line(tmp_path, record, message):
     with pytest.raises(ValueError, match=message) as caught:
         read_bed(bed)
     assert f"{bed}:1" in str(caught.value)
+
+
+@pytest.mark.parametrize("identifier", ["#gene", "q1;q2", "q||x", "g\x00"])
+@pytest.mark.parametrize("format", ["FASTA", "BED", "GFF"])
+def test_ambiguous_identifiers_are_rejected_at_every_input(tmp_path, identifier, format):
+    path = tmp_path / "input"
+    if format == "FASTA":
+        path.write_text(f">{identifier}\nATG\n")
+    elif format == "BED":
+        path.write_text(f"chr1\t0\t3\t{identifier}\n")
+    else:
+        path.write_text(f"chr1\ttest\tmRNA\t1\t3\t.\t+\t.\tID={quote(identifier)}\n")
+    with pytest.raises(ValueError, match=f"Invalid {format} gene identifier") as caught:
+        if format == "FASTA":
+            read_fasta_ids(path)
+        elif format == "BED":
+            read_bed(path)
+        else:
+            annotation_to_genes(path, {identifier})
+    assert f"{path}:1" in str(caught.value)
+
+
+def test_safe_identifiers_preserve_duplicate_anchor_counting(tmp_path):
+    bed = write(tmp_path / "query.bed", "Q\t0\t3\tq.1|a\nQ\t10\t13\tq:2\n")
+    anchors = write(tmp_path / "pairs.anchors", "###\nt1\tq.1|a\t10\nq:2\tt1\t10\nt1\tq.1|a\t10\n")
+    assert read_jcvi_pairs(anchors, {"t1"}, {g.gene_id for g in read_bed(bed)}) == (
+        ("t1", "q.1|a"),
+        ("t1", "q:2"),
+    )

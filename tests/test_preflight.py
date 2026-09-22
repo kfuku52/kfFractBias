@@ -97,3 +97,18 @@ def test_invalid_gff_is_rejected_before_alignment(tmp_path, monkeypatch, capsys,
     assert main(args) == 2
     assert "Invalid GFF strand" in capsys.readouterr().err
     assert not list(output.glob("*.summary.json"))
+
+
+def test_pairwise_validation_rejects_overlap_but_mapping_only_still_allows_self(tmp_path, capsys):
+    paths = compare_inputs(tmp_path)
+    args = ["validate"]
+    for axis in ("target", "query"):
+        for kind in ("cds", "gff"):
+            args.extend((f"--{axis}-{kind}", str(paths[f"target_{kind}"])))
+    assert main(args) == 0
+    assert main([*args, "--pairwise"]) == 2
+    assert "must be disjoint" in capsys.readouterr().err
+    args = ["validate", "--pairwise"]
+    for label, path in paths.items():
+        args.extend(("--" + label.replace("_", "-"), str(path)))
+    assert main(args) == 0

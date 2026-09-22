@@ -5,6 +5,7 @@ import json
 import re
 import sys
 import tempfile
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from .analysis import (
     calculate_fractionation_bias,
     preflight_analysis,
 )
+from .io import validate_disjoint_identifiers
 from .jcvi import (
     PreparedGenome,
     prepare_genome,
@@ -115,6 +117,11 @@ def _add_output_options(parser: argparse.ArgumentParser, *, self_comparison: boo
     )
     parser.add_argument(
         "--step-size", type=_positive_int, default=1, help="Genes advanced per window (default: 1)"
+    )
+    parser.add_argument(
+        "--max-output-rows",
+        type=_positive_int,
+        help="Maximum combined gene and window TSV data rows; checked before writing tables",
     )
     parser.add_argument(
         "--denominator",
@@ -305,6 +312,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Validate that both CDS FASTA files can be mapped to their annotations without running synteny.",
     )
     _add_annotation_options(validate)
+    validate.add_argument(
+        "--pairwise",
+        action="store_true",
+        help="Also require disjoint selected target/query IDs, as compare does",
+    )
 
     subparsers.add_parser("formats", help="Describe supported synteny formats")
     subparsers.add_parser("version", help="Print the kfFractBias version")
@@ -343,6 +355,7 @@ def _analysis_config(
         make_plot=not args.no_plot,
         collect_rows=False,
         keep_failed_work=args.keep_failed_work,
+        max_output_rows=args.max_output_rows,
         metadata=metadata or {},
         additional_inputs=additional_inputs or {},
     )
@@ -582,6 +595,12 @@ def command_validate(args: argparse.Namespace) -> int:
             minimum_mapping_fraction=args.minimum_mapping_fraction,
             isoform_policy=args.isoform_policy,
         )
+        if args.pairwise:
+            validate_disjoint_identifiers(
+                (gene.gene_id for gene in target.mapping.genes),
+                (gene.gene_id for gene in query.mapping.genes),
+                "CDS/GFF",
+            )
     print(
         json.dumps(
             {
@@ -605,13 +624,22 @@ def command_formats() -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    started = time.perf_counter()
     try:
-        if args.command == "calculate":
-            return command_calculate(args)
-        if args.command == "compare":
-            return command_compare(args)
-        if args.command == "selfcompare":
-            return command_selfcompare(args)
+        analysis_commands = {
+            "calculate": command_calculate,
+            "compare": command_compare,
+            "selfcompare": command_selfcompare,
+        }
+        if args.command in analysis_commands:
+            status = analysis_commands[args.command](args)
+            if status == 0:
+                print(
+                    f"kffractbias: completed in {time.perf_counter() - started:.3f} seconds "
+                    "(including commit and cleanup)",
+                    file=sys.stderr,
+                )
+            return status
         if args.command == "validate":
             return command_validate(args)
         if args.command == "formats":

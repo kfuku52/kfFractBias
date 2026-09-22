@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
+from itertools import groupby
 from pathlib import Path
 
 from .io import Gene, natural_key, read_bed
@@ -68,7 +69,7 @@ def read_self_hits(path: Path, genes: tuple[Gene, ...], bound: int) -> dict[tupl
 
 def quota_constraints(
     blocks: list[Block], genes: tuple[Gene, ...], depth: int
-) -> list[tuple[int, ...]]:
+) -> list[dict[int, int]]:
     """Sweep inclusive block intervals on both arms of the same genome."""
     events: dict[str, list[tuple[int, int, int]]] = defaultdict(list)
     for block_id, block in enumerate(blocks):
@@ -76,16 +77,18 @@ def quota_constraints(
             ranks = [point[axis] for point in block]
             seqid = genes[ranks[0]].seqid
             events[seqid].extend(((min(ranks), 1, block_id), (max(ranks) + 1, -1, block_id)))
-    constraints: set[tuple[int, ...]] = set()
+    constraints: set[tuple[tuple[int, int], ...]] = set()
     for seqid in sorted(events, key=natural_key):
         active: dict[int, int] = defaultdict(int)
-        for _rank, change, block_id in sorted(events[seqid]):
-            active[block_id] += change
-            if not active[block_id]:
-                del active[block_id]
-            if len(active) > depth:
-                constraints.add(tuple(sorted(active)))
-    return sorted(constraints)
+        for _rank, changes in groupby(sorted(events[seqid]), key=lambda event: event[0]):
+            # Evaluate actual intervals, not transient states at shared endpoints.
+            for _, change, block_id in changes:
+                active[block_id] += change
+                if not active[block_id]:
+                    del active[block_id]
+            if sum(active.values()) > depth:
+                constraints.add(tuple(sorted(active.items())))
+    return [dict(constraint) for constraint in sorted(constraints)]
 
 
 def select_quota(blocks: list[Block], genes: tuple[Gene, ...], depth: int) -> list[int]:
@@ -97,7 +100,7 @@ def select_quota(blocks: list[Block], genes: tuple[Gene, ...], depth: int) -> li
     constraints = quota_constraints(blocks, genes, depth)
     scores = [min(len({p[0] for p in block}), len({p[1] for p in block})) for block in blocks]
     model = MIPDataModel(
-        [dict.fromkeys(constraint, 1) for constraint in constraints],
+        constraints,
         [depth] * len(constraints),
         scores,
         len(blocks),

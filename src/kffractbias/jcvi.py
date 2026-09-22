@@ -16,6 +16,7 @@ from .io import (
     annotation_to_genes,
     iter_fasta,
     select_isoforms,
+    validate_disjoint_identifiers,
     write_bed,
 )
 
@@ -282,15 +283,11 @@ def run_pairwise_synteny(
         minimum_mapping_fraction=minimum_mapping_fraction,
         isoform_policy=isoform_policy,
     )
-    overlapping_ids = {gene.gene_id for gene in target.mapping.genes}.intersection(
-        gene.gene_id for gene in query.mapping.genes
+    validate_disjoint_identifiers(
+        (gene.gene_id for gene in target.mapping.genes),
+        (gene.gene_id for gene in query.mapping.genes),
+        "CDS/GFF",
     )
-    if overlapping_ids:
-        examples = ", ".join(sorted(overlapping_ids)[:10])
-        raise ValueError(
-            "Pairwise target and query CDS/GFF identifiers must be disjoint; "
-            f"found {len(overlapping_ids)} overlapping identifier(s), including: {examples}"
-        )
     if before_alignment is not None:
         before_alignment(target, query)
     preflight_tools(aligner)
@@ -298,7 +295,7 @@ def run_pairwise_synteny(
     command = (
         sys.executable,
         "-m",
-        "jcvi.compara.catalog",
+        "kffractbias.jcvi_compat",
         "ortholog",
         "target",
         "query",

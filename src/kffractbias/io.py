@@ -110,6 +110,33 @@ def sha256_file(path: str | Path) -> str:
     return digest.hexdigest()
 
 
+def validate_gene_identifier(value: str, format_name: str, location: str) -> None:
+    if not value:
+        raise ValueError(f"Empty {format_name} gene identifier at {location}")
+    if (
+        value.startswith("#")
+        or ";" in value
+        or "||" in value
+        or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value)
+    ):
+        raise ValueError(
+            f"Invalid {format_name} gene identifier {value!r} at {location}; "
+            "identifiers must not start with # or contain whitespace, control characters, ; or ||"
+        )
+
+
+def validate_disjoint_identifiers(
+    target_ids: Iterable[str], query_ids: Iterable[str], label: str
+) -> None:
+    overlapping = set(target_ids).intersection(query_ids)
+    if overlapping:
+        examples = ", ".join(sorted(overlapping, key=natural_key)[:10])
+        raise ValueError(
+            f"Pairwise target and query {label} identifiers must be disjoint; "
+            f"found {len(overlapping)} overlapping identifier(s), including: {examples}"
+        )
+
+
 def iter_fasta(path: str | Path) -> Iterator[tuple[str, str, str]]:
     """Validate nucleotide FASTA while retaining at most one sequence record."""
     identifiers: set[str] = set()
@@ -131,6 +158,7 @@ def iter_fasta(path: str | Path) -> Iterator[tuple[str, str, str]]:
                 if not header:
                     raise ValueError(f"Empty FASTA identifier at {path}:{line_number}")
                 identifier = header.split(None, 1)[0]
+                validate_gene_identifier(identifier, "FASTA", f"{path}:{line_number}")
                 if identifier in identifiers:
                     raise ValueError(
                         f"Duplicate FASTA identifier {identifier!r} at {path}:{line_number}"
@@ -216,7 +244,7 @@ def parse_attributes(value: str) -> dict[str, tuple[str, ...]]:
 def _validate_seqid(value: str, format_name: str, location: str) -> None:
     if not value.strip():
         raise ValueError(f"Empty {format_name} sequence identifier at {location}")
-    if any(
+    if value.startswith("#") or any(
         character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value
     ):
         raise ValueError(f"Invalid {format_name} sequence identifier at {location}")
@@ -316,6 +344,7 @@ def _mapped_gff_intervals(
         for gene_id in row.attributes.get(selected_attribute, ()):
             if gene_id not in selected_matches:
                 continue
+            validate_gene_identifier(gene_id, "GFF", f"{gff_path}:{row.line_number}")
             previous = intervals.get(gene_id)
             if previous is None:
                 intervals[gene_id] = Gene(row.seqid, row.start, row.end, gene_id, row.strand)
@@ -464,8 +493,7 @@ def read_bed(path: str | Path) -> tuple[Gene, ...]:
                 raise ValueError(f"Expected at least 4 BED columns at {path}:{line_number}")
             gene_id = columns[3]
             _validate_seqid(columns[0], "BED", f"{path}:{line_number}")
-            if not gene_id:
-                raise ValueError(f"Empty BED gene identifier at {path}:{line_number}")
+            validate_gene_identifier(gene_id, "BED", f"{path}:{line_number}")
             if gene_id in seen:
                 raise ValueError(f"Duplicate BED identifier {gene_id!r} in {path}")
             seen.add(gene_id)

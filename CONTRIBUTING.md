@@ -43,7 +43,7 @@ BLAST variants, and check known pairs, table sizes, and retention values.
 CI preserves the existing Linux/Python 3.11–3.14 check names and adds a
 macOS/Python 3.12 fast job for filesystem/locking behavior. The Linux/Python 3.14
 job installs the comparison extras as well; external LAST/BLAST integration
-remains on Linux/Python 3.12. Distribution checks compare source fingerprints
+runs on Linux/Python 3.12 and 3.14. Distribution checks compare source fingerprints
 between checkout, wheel, and sdist, including a wheel without Git provenance.
 
 Run `python scripts/benchmark.py --genes 10000 --queries 100` to measure dense
