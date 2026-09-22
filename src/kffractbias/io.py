@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import re
+import shlex
 from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
@@ -223,21 +224,36 @@ def select_isoforms(
 
 def parse_attributes(value: str) -> dict[str, tuple[str, ...]]:
     parsed: dict[str, list[str]] = defaultdict(list)
-    for attribute_field in value.strip().strip(";").split(";"):
-        attribute_field = attribute_field.strip()
-        if not attribute_field:
-            continue
-        if "=" in attribute_field:
-            key, raw = attribute_field.split("=", 1)
-        else:
-            match = re.match(r"([^\s]+)\s+[\"']?(.*?)[\"']?$", attribute_field)
-            if not match:
+    value = value.strip()
+    if value in {"", "."}:
+        return {}
+    if re.match(r"[^\s=;]+=", value):
+        for attribute_field in value.strip(";").split(";"):
+            attribute_field = attribute_field.strip()
+            if not attribute_field:
                 continue
-            key, raw = match.groups()
-        for item in raw.split(","):
-            item = unquote(item.strip().strip("\"'"))
-            if item:
-                parsed[key].append(item)
+            if "=" not in attribute_field:
+                raise ValueError("Expected a GFF key=value attribute")
+            key, raw = attribute_field.split("=", 1)
+            for item in raw.split(","):
+                item = unquote(item.strip().strip("\"'"))
+                if item:
+                    parsed[key].append(item)
+    else:
+        # GTF values are quoted scalars, not percent-encoded GFF3 lists.
+        lexer = shlex.shlex(value, posix=True, punctuation_chars=";")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = iter(lexer)
+        for key in tokens:
+            scalar = next(tokens, None)
+            if scalar is None:
+                raise ValueError(f"Missing GTF attribute value for {key!r}")
+            separator = next(tokens, None)
+            if separator is not None and separator != ";":
+                raise ValueError(f"Expected ';' after GTF attribute {key!r}")
+            if scalar:
+                parsed[key].append(scalar)
     return {key: tuple(values) for key, values in parsed.items()}
 
 
@@ -277,13 +293,19 @@ def _iter_gff(path: str | Path) -> Iterator[_GffRecord]:
                 raise ValueError(f"Invalid GFF coordinates at {path}:{line_number}") from exc
             if start < 0 or end <= start:
                 raise ValueError(f"Invalid GFF interval at {path}:{line_number}")
+            try:
+                attributes = parse_attributes(columns[8])
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid annotation attributes at {path}:{line_number}: {exc}"
+                ) from exc
             yield _GffRecord(
                 columns[0],
                 columns[2],
                 start,
                 end,
                 strand,
-                parse_attributes(columns[8]),
+                attributes,
                 line_number,
             )
 
@@ -381,13 +403,16 @@ def _annotation_loci(
     parents: dict[str, set[str]] = defaultdict(set)
     candidates: dict[str, set[str]] = defaultdict(set)
     known_loci: set[str] = set()
+    explicit_loci: set[str] = set()
     for row in _iter_gff(gff_path):
         row_feature, attrs = row.feature, row.attributes
         row_ids = set(attrs.get("ID", ())) | set(attrs.get("transcript_id", ()))
         ancestors = set(attrs.get("gene_id", ())) or set(attrs.get("Parent", ()))
         known_loci.update(attrs.get("gene_id", ()))
+        explicit_loci.update(attrs.get("gene_id", ()))
         if row_feature == "gene":
             known_loci.update(row_ids)
+            explicit_loci.update(row_ids)
         elif row_feature in {"mRNA", "transcript"}:
             known_loci.update(ancestors)
         if row_feature != "gene":
@@ -409,6 +434,9 @@ def _annotation_loci(
                 candidates[identifier].update(ancestors)
 
     def roots(identifier: str, seen: frozenset[str] = frozenset()) -> set[str]:
+        # GTF gene_id and transcript_id occupy separate namespaces.
+        if identifier in explicit_loci:
+            return {identifier}
         if identifier in seen:
             raise ValueError(f"Cyclic GFF parent relationship for {identifier!r} in {gff_path}")
         if not parents.get(identifier):

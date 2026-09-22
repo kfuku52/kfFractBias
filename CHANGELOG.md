@@ -7,6 +7,9 @@ untagged development milestones, not published release artifacts. See the
 
 ## Unreleased
 
+- Preserve literal GTF attribute values and quoted notes, reject malformed
+  attributes with source lines, and prevent gene/transcript name collisions
+  from merging independent loci during isoform selection.
 - Count overlapping arms of the same self-synteny block separately in depth
   constraints, with interval-coverage oracle and default-bound regressions.
 - Reject gene IDs that collide with comments or ID-list/format delimiters,

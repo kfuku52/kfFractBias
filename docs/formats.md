@@ -33,7 +33,11 @@ Detection chooses the single feature/attribute pair matching the most distinct
 FASTA IDs, rather than combining matches from different pairs. Ties prefer
 features in the order mRNA, transcript, gene, CDS, then attributes in the order
 ID, Name, transcript_id, gene_id, protein_id, locus_tag, Parent, coge_fid.
-Matching is case-sensitive; annotation attribute values are percent-decoded.
+Matching is case-sensitive. GFF3 `key=value` attributes are split on commas
+before percent-decoding each value. GTF `key "value"` attributes are literal
+scalars: commas, equals signs, and percent sequences inside the quotes remain
+part of the value. Semicolons inside quoted GTF notes do not start new
+attributes. Malformed attribute syntax reports the source path and line.
 Missing selected attributes contribute no match. If the mapping threshold is
 explicitly lowered, unmatched FASTA records are omitted from prepared BED/CDS.
 Zero matches always fail, even with a lowered threshold.
@@ -57,7 +61,8 @@ report the annotation file and line number before alignment starts.
 
 The default mapping fraction is 1.0. The fraction is checked before isoform
 selection. GFF3 Parent/GTF gene_id relationships determine known loci; missing
-relationships are reported rather than guessed. See the README for the
+relationships are reported rather than guessed. GTF gene IDs remain distinct
+from transcript IDs with the same spelling. See the README for the
 error/longest/all isoform policies and the
 [annotation tutorial](../examples/annotations/README.md) for a synthetic example.
 

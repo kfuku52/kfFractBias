@@ -271,3 +271,53 @@ def test_safe_identifiers_preserve_duplicate_anchor_counting(tmp_path):
         ("t1", "q.1|a"),
         ("t1", "q:2"),
     )
+
+
+@pytest.mark.parametrize("identifier", ["tx,1", "tx=1", "tx%31"])
+def test_gtf_identifiers_remain_literal_in_prepared_inputs(tmp_path, identifier):
+    fasta = write(tmp_path / "cds.fa", f">{identifier}\nATG\n")
+    gtf = write(
+        tmp_path / "genes.gtf",
+        f'chr1\ttest\ttranscript\t1\t3\t.\t+\t.\tgene_id "g1"; transcript_id "{identifier}";\n',
+    )
+    prepared = prepare_genome("literal", fasta, gtf, tmp_path)
+    assert read_fasta_ids(prepared.cds_path) == {identifier}
+    assert read_bed(prepared.bed_path) == (Gene("chr1", 0, 3, identifier, "+"),)
+    assert prepared.mapping.locus_by_id == {identifier: "g1"}
+
+
+def test_quoted_gtf_note_cannot_introduce_a_gene_relationship(tmp_path):
+    gtf = write(
+        tmp_path / "genes.gtf",
+        'chr1\ttest\ttranscript\t1\t3\t.\t+\t.\tgene_id "g1"; '
+        'transcript_id "t1"; note "a; gene_id fake;";\n',
+    )
+    mapping = annotation_to_genes(gtf, {"t1"})
+    assert mapping.locus_by_id == {"t1": "g1"}
+
+
+def test_gtf_gene_and_transcript_namespaces_do_not_merge_loci(tmp_path):
+    fasta = write(tmp_path / "cds.fa", ">t1\nATG\n>g1\nATGATG\n")
+    gtf = write(
+        tmp_path / "genes.gtf",
+        'chr1\ttest\ttranscript\t1\t3\t.\t+\t.\tgene_id "g1"; transcript_id "t1";\n'
+        'chr1\ttest\ttranscript\t11\t16\t.\t+\t.\tgene_id "g2"; transcript_id "g1";\n',
+    )
+    for policy in ("error", "longest", "all"):
+        prepared = prepare_genome(policy, fasta, gtf, tmp_path, isoform_policy=policy)
+        assert prepared.mapping.locus_by_id == {"t1": "g1", "g1": "g2"}
+        assert [gene.gene_id for gene in prepared.mapping.genes] == ["t1", "g1"]
+        assert prepared.mapping.collapsed_isoform_count == 0
+
+
+@pytest.mark.parametrize(
+    "attributes", ['gene_id "g1"; transcript_id "t1', 'gene_id "g1"; transcript_id']
+)
+def test_malformed_gtf_attributes_report_source_line(tmp_path, attributes):
+    gtf = write(
+        tmp_path / "invalid.gtf",
+        f"chr1\ttest\ttranscript\t1\t3\t.\t+\t.\t{attributes}\n",
+    )
+    with pytest.raises(ValueError, match="Invalid annotation attributes") as caught:
+        annotation_to_genes(gtf, {"t1"})
+    assert f"{gtf}:1" in str(caught.value)

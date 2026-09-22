@@ -32,6 +32,8 @@ for what the fingerprint covers and why an installed wheel's Git fields are null
 | `validate` success treated as pairwise readiness | Add `--pairwise` to check disjoint selected IDs. Mapping-only validation still permits self-comparison inputs. |
 | Partial CDS-to-annotation mapping accepted | Mapping defaults to 100%. Inspect the missing IDs first; use an explicit minimum fraction only if loss is intentional. |
 | Multiple transcript IDs counted as independent genes | Choose representative input or `--isoform-policy longest`; use `all` only when identifier-level counting is intended. |
+| GTF attribute values split at commas or decoded as GFF3 values | GTF quoted values now remain literal, including `,`, `=`, and percent sequences. Regenerate prepared inputs and anchors if earlier mapping selected the wrong identifiers. Malformed attributes now fail with a source line. |
+| A GTF gene_id followed as though it were another transcript_id | Gene and transcript namespaces remain separate. Regenerate comparisons if this previously merged independent loci or removed a representative under `longest`. |
 | Empty sequence names, arbitrary strand values, or opposite-strand segments silently accepted | Correct the annotation/BED fields. Unknown `?` is normalized to `.`, and conflicting known strands for one mapped ID are rejected. |
 | Malformed synteny rows silently skipped | Every data row must have valid structure and resolve to the supplied BEDs, even if its sequence is later excluded. |
 | Native JCVI self filtering and quota behavior | The chromosome-aware adapter fixes interchromosomal filtering and shares self depth constraints across both axes. Regenerate old self anchors to obtain these corrections. |

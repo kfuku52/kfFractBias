@@ -183,6 +183,11 @@ identifier, including separate transcripts of the same locus. The mapping
 fraction is checked **before** isoform selection, so intentional selection does
 not look like missing annotation.
 
+GTF quoted attribute values are matched literally, including commas, equals
+signs, and percent sequences. GFF3 values use percent decoding instead.
+GTF gene IDs and transcript IDs with the same spelling remain separate;
+identifier spelling alone does not establish an isoform relationship.
+
 The selected identifiers remain unchanged in BED and anchors. Windows and
 denominators count these selected BED rows. Parent relationships are resolved
 through transcript/CDS hierarchies, not inferred from identifier spelling.
