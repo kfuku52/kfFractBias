@@ -5,6 +5,7 @@ from urllib.parse import quote
 import pytest
 
 from kffractbias.io import (
+    Gene,
     annotation_to_genes,
     read_bed,
     read_fasta_ids,
@@ -170,6 +171,33 @@ def test_conflicting_gff_segments_are_not_silently_merged(tmp_path, strands):
     with pytest.raises(ValueError, match="conflicting strands") as caught:
         annotation_to_genes(gff, {"t1"})
     assert f"{gff}:{len(strands)}" in str(caught.value)
+
+
+def test_gff_segments_merge_each_parent_and_preserve_gene_order(tmp_path):
+    gff = write(
+        tmp_path / "segments.gff",
+        "chr10\ttest\tCDS\t21\t30\t.\t?\t0\tParent=t2,t1\n"
+        "chr2\ttest\tCDS\t5\t9\t.\t-\t0\tParent=t3\n"
+        "chr10\ttest\tCDS\t1\t10\t.\t+\t0\tParent=t1,t2\n",
+    )
+    mapping = annotation_to_genes(gff, {"t1", "t2", "t3"})
+    assert mapping.genes == (
+        Gene("chr2", 4, 9, "t3", "-"),
+        Gene("chr10", 0, 30, "t1", "+"),
+        Gene("chr10", 0, 30, "t2", "+"),
+    )
+
+
+@pytest.mark.parametrize("strand", ["+", "-"])
+def test_gff_sequence_conflict_precedes_strand_conflict(tmp_path, strand):
+    gff = write(
+        tmp_path / "conflict.gff",
+        "chr1\ttest\tCDS\t1\t3\t.\t+\t0\tParent=t1\n"
+        f"chr2\ttest\tCDS\t11\t13\t.\t{strand}\t0\tParent=t1\n",
+    )
+    with pytest.raises(ValueError) as caught:
+        annotation_to_genes(gff, {"t1"})
+    assert str(caught.value) == f"GFF identifier 't1' occurs on multiple sequences at {gff}:2"
 
 
 @pytest.mark.parametrize(

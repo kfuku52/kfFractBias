@@ -348,24 +348,24 @@ def _mapped_gff_intervals(
             previous = intervals.get(gene_id)
             if previous is None:
                 intervals[gene_id] = Gene(row.seqid, row.start, row.end, gene_id, row.strand)
-            else:
-                location = f"{gff_path}:{row.line_number}"
-                if previous.seqid != row.seqid:
-                    raise ValueError(
-                        f"GFF identifier {gene_id!r} occurs on multiple sequences at {location}"
-                    )
-                known_strands = {previous.strand, row.strand} - {"."}
-                if len(known_strands) > 1:
-                    raise ValueError(
-                        f"GFF identifier {gene_id!r} has conflicting strands at {location}"
-                    )
-                intervals[gene_id] = Gene(
-                    row.seqid,
-                    min(previous.start, row.start),
-                    max(previous.end, row.end),
-                    gene_id,
-                    next(iter(known_strands), "."),
+                continue
+            location = f"{gff_path}:{row.line_number}"
+            if previous.seqid != row.seqid:
+                raise ValueError(
+                    f"GFF identifier {gene_id!r} occurs on multiple sequences at {location}"
                 )
+            known_strands = {previous.strand, row.strand} - {"."}
+            if len(known_strands) > 1:
+                raise ValueError(
+                    f"GFF identifier {gene_id!r} has conflicting strands at {location}"
+                )
+            intervals[gene_id] = Gene(
+                row.seqid,
+                min(previous.start, row.start),
+                max(previous.end, row.end),
+                gene_id,
+                next(iter(known_strands), "."),
+            )
 
     return tuple(
         sorted(
