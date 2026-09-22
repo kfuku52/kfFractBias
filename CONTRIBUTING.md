@@ -20,6 +20,59 @@ Install BLAST+ as well to exercise both aligners as CI does. BLAST tests skip
 when `blastn` is absent; a local run with skips is not a check of that aligner.
 Use `--no-sync` while checking so an invocation does not remove optional
 packages from an already prepared integration environment.
+When repeating `uv sync` in that environment, retain `--extra all`: selecting
+only `plot` removes the comparison dependencies. Initial sync may download
+packages; `--offline` can be added when the required packages are already cached.
+
+## Choosing checks
+
+All commands below run from the repository root in the environment above.
+For a focused check, use `uv run --no-sync python -m pytest -q -rs` followed
+by the test paths in the table. These are starting points during editing;
+the standard `scripts/check.py` check is still required before push.
+
+| Change | Focused tests | Additional verification |
+| --- | --- | --- |
+| CLI options, README, docs, examples | `tests/test_cli.py tests/test_documentation.py` | Real comparison examples require the integration tier below. |
+| BED/FASTA/GFF/synteny parsing or isoform selection | `tests/test_io.py tests/test_analysis.py tests/test_preflight.py` | Include malformed, ambiguous, and duplicate input cases. |
+| Retention, windows, sequence selection, denominator or streaming | `tests/test_profiles.py tests/test_analysis.py` | Check known numerical results, not just successful output. |
+| Output safety, locks, snapshots, provenance | `tests/test_run.py tests/test_safety.py tests/test_provenance.py` | Filesystem behavior also runs on Linux and macOS in CI. |
+| Plotting | `tests/test_plotting.py` | Requires the plot extra; skipped tests do not verify figures. |
+| JCVI orchestration, self filtering/depth, compatibility adapter | `tests/test_jcvi.py tests/test_selfscan.py tests/test_preflight.py` | Use all extras for JCVI/solver tests, then real integration. |
+| Packaging, version, lockfile, distribution contents | `tests/test_metadata.py` | Run `scripts/check.py --full`; follow the version procedure below when applicable. |
+
+Verification tiers:
+
+- **Fast, local:** `uv run --no-sync python scripts/check.py` checks Ruff lint
+  and formatting, mypy, and pytest. After environment setup it needs no network,
+  real genomes, or external aligners, provided `KFFRACTBIAS_RUN_INTEGRATION`
+  is unset. Pytest examples use temporary directories and assert exact results.
+  To see skip reasons, use `uv run --no-sync python -m pytest -q -rs`.
+- **Distributions:** `uv run --no-sync python scripts/check.py --full` adds
+  coverage (80% threshold), wheel/sdist builds, and isolated installation/tests.
+  It writes `.coverage` and `dist/`; isolated environments use temporary
+  directories. Build/setup can access package indexes unless the caches and
+  offline configuration suffice. This is not a real-data analysis.
+- **Real alignment:** after `uv sync --locked --extra test --extra all` and
+  installing LAST/BLAST+ as described in [troubleshooting](docs/troubleshooting.md),
+  run `uv run --no-sync python scripts/check.py --integration` (add `--full`
+  when distribution checks are also needed). It uses small synthetic inputs
+  in temporary directories, without genomic downloads. Check both LAST
+  executables and both BLAST+ executables first. BLAST skips are not success
+  for that aligner; missing required tools must be reported, not bypassed.
+
+For a minimal execution check, run
+`uv run --no-sync python -m pytest -q -rs tests/test_documentation.py`.
+It checks local links and CLI syntax and executes the minimal calculate and
+annotation-validation tutorials in temporary directories. Success means pytest
+exits zero with those execution tests passing, including the documented
+retention values and annotation counts. It does not run every shell fence,
+fetch remote links, or exercise real comparison/plot examples.
+
+Benchmarks, real-genome runs, and the network-dependent CI dependency audit
+are separate from the fast suite. Do not use them as an automatic smoke check.
+
+## Test and contribution conventions
 
 Changes to synteny generation should also pass the real JCVI/LAST integration
 test documented in the README. New parsing behavior must include malformed,
