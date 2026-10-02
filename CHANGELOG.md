@@ -7,6 +7,9 @@ untagged development milestones, not published release artifacts. See the
 
 ## Unreleased
 
+- Refresh the development/integration lock to pypdf 6.19.0 and urllib3 2.8.0
+  to resolve their reported security advisories without weakening audit checks.
+
 - Export unquota self-synteny block/depth evidence, support protein self-alignment,
   and expose complete annotation locus ordering for native WGD workflows.
 
