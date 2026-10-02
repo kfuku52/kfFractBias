@@ -226,6 +226,10 @@ inclusive gene ranks without an overlap tolerance. It must be chosen
 from the expected homeologous structure rather than inferred automatically.
 If both arms of one block overlap on the same chromosome, their overlap counts
 twice toward depth; such a block cannot be selected at depth 1.
+For discovery without an expected depth, use `--screening none` and omit
+`--depth`. This retains all prequota blocks; it does not infer ploidy.
+Both modes publish [prequota block and coverage audits](docs/formats.md#prequota-self-evidence)
+in the retained synteny directory.
 The default `--self-hit-percent 98` is JCVI's near-self identity cutoff and can
 be changed for unusually recent polyploidy. The default `--diagonal-bound 300`
 excludes intrachromosomal anchors whose gene-rank difference is **less than**
@@ -292,6 +296,7 @@ or reuse a previous alignment cache. To reuse existing anchors, use the
 `selfcompare` writes the same output set and records identity/mirror filtering,
 interchromosomal and intrachromosomal pair counts, symmetric depth, and the
 interpretation limitation in the JSON summary.
+It also records the screening mode and hashes of prequota evidence.
 
 `--denominator all` uses every target gene in each window. `--denominator
 syntenic` first removes target genes without any retained query match, matching

@@ -17,7 +17,7 @@ from .analysis import (
     calculate_fractionation_bias,
     preflight_analysis,
 )
-from .io import validate_disjoint_identifiers
+from .io import sha256_file, validate_disjoint_identifiers
 from .jcvi import (
     PreparedGenome,
     prepare_genome,
@@ -273,9 +273,14 @@ def build_parser() -> argparse.ArgumentParser:
     _add_self_annotation_options(selfcompare)
     selfcompare.add_argument(
         "--depth",
-        required=True,
         type=_positive_int,
-        help="Maximum expected homeologous block depth on each self-comparison axis",
+        help="Maximum expected block depth; required with quota screening, forbidden with none",
+    )
+    selfcompare.add_argument(
+        "--screening",
+        choices=("quota", "none"),
+        default="quota",
+        help="Apply the requested depth quota (default) or retain all prequota self blocks without assuming depth",
     )
     selfcompare.add_argument(
         "--cpus", type=_positive_int, default=1, help="Threads for sequence alignment"
@@ -499,6 +504,10 @@ def command_compare(args: argparse.Namespace) -> int:
 
 
 def command_selfcompare(args: argparse.Namespace) -> int:
+    if args.screening == "quota" and args.depth is None:
+        raise ValueError("Quota screening requires --depth")
+    if args.screening == "none" and args.depth is not None:
+        raise ValueError("--screening none does not accept --depth")
     if (args.feature is None) != (args.attribute is None):
         raise ValueError("--feature and --attribute must be specified together")
     if args.blast_task is not None and args.aligner != "blast":
@@ -530,6 +539,7 @@ def command_selfcompare(args: argparse.Namespace) -> int:
                 intrachromosomal_diagonal_bound=args.diagonal_bound,
                 before_alignment=_before_alignment(args, run),
                 blast_task=args.blast_task or "blastn",
+                screening=args.screening,
             )
         metadata = {
             "interpretation": (
@@ -537,19 +547,31 @@ def command_selfcompare(args: argparse.Namespace) -> int:
                 "not an outgroup-based fractionation-bias estimate."
             ),
             "synteny_generation": {
-                "method": "JCVI chromosome-aware self-synteny with shared-genome QUOTA-ALIGN",
+                "method": "JCVI chromosome-aware self-synteny"
+                + (
+                    " with shared-genome QUOTA-ALIGN"
+                    if synteny.screening == "quota"
+                    else " without quota screening"
+                ),
                 "depth": synteny.depth,
                 "quota": synteny.quota,
+                "screening": synteny.screening,
+                "prequota_evidence": {
+                    "outputs": {key: str(path) for key, path in synteny.prequota_outputs.items()},
+                    "output_sha256": {
+                        key: sha256_file(path) for key, path in synteny.prequota_outputs.items()
+                    },
+                },
                 "commands": [list(command) for command in synteny.commands],
                 "blast_task": synteny.blast_task,
                 "tool_versions": synteny.tool_versions,
                 "identity_and_mirror_handling": {
                     "jcvi_native_self_mode": True,
                     "chromosome_aware_scan": True,
-                    "shared_genome_quota_constraints": True,
+                    "shared_genome_quota_constraints": synteny.screening == "quota",
                     "self_hit_percent": synteny.self_hit_percent,
                     "intrachromosomal_diagonal_bound_genes": synteny.intrachromosomal_diagonal_bound,
-                    "symmetric_quota_screen": True,
+                    "symmetric_quota_screen": synteny.screening == "quota",
                 },
                 "gff_mapping": synteny.genome.mapping.metadata(),
             },

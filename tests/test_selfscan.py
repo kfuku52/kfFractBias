@@ -120,3 +120,48 @@ def test_interchromosomal_pairs_ignore_unrelated_chromosomes(tmp_path, padding_c
             output, "jcvi", identifiers, identifiers, allow_ambiguous_orientation=True
         ).pairs
     ) == set(expected)
+
+
+def test_unquota_retains_all_three_copy_blocks_and_audits_observed_depth(tmp_path):
+    import csv
+    import json
+
+    pytest.importorskip("jcvi")
+    genes = tuple(Gene(chrom, i, i + 1, f"{chrom}{i}") for chrom in "ABC" for i in range(8))
+    bed = tmp_path / "self.bed"
+    write_bed(genes, bed)
+    pairs = [
+        (f"{a}{i}", f"{b}{i}") for a, b in (("A", "B"), ("A", "C"), ("B", "C")) for i in range(8)
+    ]
+    blast = alignment(tmp_path / "hits.last", pairs)
+    output = tmp_path / "unquota.anchors"
+    scan_self(blast, blast, bed, output, bound=300, depth=None, screening="none")
+    identifiers = {gene.gene_id for gene in genes}
+    assert set(
+        parse_synteny_pairs(
+            output, "jcvi", identifiers, identifiers, allow_ambiguous_orientation=True
+        ).pairs
+    ) == set(pairs)
+    summary = json.loads((tmp_path / "self.self.raw.summary.json").read_text())
+    assert summary["gene_span_coverage"] == 1
+    assert summary["block_arm_depth_distribution"] == {"2": 24}
+    with (tmp_path / "self.self.raw.depth.tsv").open() as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    assert all(row["num_anchor_partners"] == "2" for row in rows)
+
+
+def test_explicit_empty_unquota_evidence_is_valid_but_quota_still_fails(tmp_path):
+    import json
+
+    pytest.importorskip("jcvi")
+    bed = tmp_path / "self.bed"
+    write_bed((Gene("chr1", 0, 100, "g1"), Gene("chr1", 100, 200, "g2")), bed)
+    blast = alignment(tmp_path / "hits.last", [])
+    output = tmp_path / "unquota.anchors"
+    scan_self(blast, blast, bed, output, bound=300, depth=None, screening="none", allow_empty=True)
+    summary = json.loads((tmp_path / "self.self.raw.summary.json").read_text())
+    assert summary["num_blocks"] == summary["gene_span_coverage"] == 0
+    assert summary["block_arm_depth_distribution"] == {"0": 2}
+    assert output.read_text() == ""
+    with pytest.raises(ValueError, match="only without quota"):
+        scan_self(blast, blast, bed, output, bound=300, depth=1, allow_empty=True)

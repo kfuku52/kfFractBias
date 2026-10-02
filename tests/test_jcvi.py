@@ -57,6 +57,14 @@ def test_run_self_synteny_uses_native_self_mode_and_symmetric_quota(tmp_path, mo
             write(cwd / "self.self.last.P98L0.inverse.filtered", "g1\tg2\t95\n")
         else:
             write(cwd / "self.self.lifted.2x2.anchors", "###\ng1\tg2\t10\n")
+            for filename in (
+                "self.self.anchors",
+                "self.self.lifted.anchors",
+                "self.self.raw.blocks.tsv",
+                "self.self.raw.depth.tsv",
+                "self.self.raw.summary.json",
+            ):
+                write(cwd / filename, "prequota evidence\n")
 
     monkeypatch.setattr("kffractbias.jcvi._run_checked", fake_run)
     result = run_self_synteny(
@@ -77,3 +85,46 @@ def test_run_self_synteny_uses_native_self_mode_and_symmetric_quota(tmp_path, mo
     assert "--diagonal-bound=7" in commands[1]
     assert result.anchors_path.name == "self.self.lifted.2x2.anchors"
     assert result.intrachromosomal_diagonal_bound == 7
+    assert result.screening == "quota"
+    assert result.prequota_outputs["blocks"].name == "self.self.raw.blocks.tsv"
+
+
+def test_run_unquota_self_has_no_depth_or_solver_constraint(tmp_path, monkeypatch):
+    cds = write(tmp_path / "genome.fa", ">g1\nATG\n>g2\nATG\n")
+    gff = write(
+        tmp_path / "genome.gff3",
+        "chr1\ttest\tmRNA\t1\t3\t.\t+\t.\tID=g1\nchr2\ttest\tmRNA\t1\t3\t.\t+\t.\tID=g2\n",
+    )
+    commands = []
+
+    def fake_run(command, *, cwd, description):
+        commands.append(command)
+        if command[3] == "align":
+            write(cwd / "self.self.last.P98L0.inverse.filtered", "g1\tg2\t95\n")
+        else:
+            for filename in (
+                "self.self.anchors",
+                "self.self.lifted.anchors",
+                "self.self.raw.blocks.tsv",
+                "self.self.raw.depth.tsv",
+                "self.self.raw.summary.json",
+            ):
+                write(cwd / filename, "prequota evidence\n")
+
+    monkeypatch.setattr("kffractbias.jcvi._run_checked", fake_run)
+    result = run_self_synteny(
+        cds=cds,
+        gff=gff,
+        work_dir=tmp_path / "work",
+        depth=None,
+        screening="none",
+        cpus=1,
+        cscore=0.7,
+        aligner="last",
+    )
+    assert result.depth is None
+    assert result.quota == "none"
+    assert result.screening == "none"
+    assert result.anchors_path.name == "self.self.lifted.anchors"
+    assert "--screening=none" in commands[1]
+    assert not any(argument.startswith("--depth") for argument in commands[1])

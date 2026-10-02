@@ -125,6 +125,14 @@ excluded and exactly 300 is allowed. Interchromosomal pairs are not subject to
 that distance test. The filter is applied before both chaining and liftover;
 upstream identity, C-score, and tandem filtering remain independent.
 
+`selfcompare --screening none` retains every lifted self block without assuming
+an expected depth; omit `--depth`. The default quota mode is unchanged. Both
+modes retain the [prequota self evidence](formats.md#prequota-self-evidence).
+Its block-arm depth counts observed inclusive spans on the full prepared BED,
+not a multiplication factor. Redundant/local blocks, gene density and incomplete
+annotation affect these statistics. Direct anchor-partner counts and span
+coverage are reported separately; neither is a WGD significance test.
+
 `selfcompare --depth N` constrains overlapping blocks across both arms of the
 same genome. Block intervals use inclusive gene ranks without an overlap
 tolerance. It does not allow a region to exceed depth N by appearing on

@@ -463,6 +463,57 @@ def _annotation_loci(
     return loci, unresolved
 
 
+def annotation_locus_order(
+    gff_path: str | Path, *, feature: str, attribute: str
+) -> tuple[Gene, ...]:
+    """Order all annotated loci, including loci without supplied sequences."""
+    identifiers = {
+        identifier
+        for row in _iter_gff(gff_path)
+        if row.feature == feature
+        for identifier in row.attributes.get(attribute, ())
+    }
+    intervals = _mapped_gff_intervals(gff_path, feature, attribute, identifiers)
+    loci, _unresolved = _annotation_loci(gff_path, feature, attribute, identifiers)
+    by_locus: dict[str, Gene] = {}
+
+    def add(gene: Gene, locus: str) -> None:
+        previous = by_locus.get(locus)
+        if previous is not None:
+            strands = {previous.strand, gene.strand} - {"."}
+            if previous.seqid != gene.seqid or len(strands) > 1:
+                raise ValueError(f"Locus {locus!r} has incompatible annotation intervals")
+            gene = Gene(
+                gene.seqid,
+                min(previous.start, gene.start),
+                max(previous.end, gene.end),
+                locus,
+                next(iter(strands), "."),
+            )
+        by_locus[locus] = replace(gene, gene_id=locus)
+
+    for gene in intervals:
+        add(gene, loci[gene.gene_id])
+    for row in _iter_gff(gff_path):
+        if row.feature == "gene":
+            values = next(
+                (
+                    row.attributes[key]
+                    for key in ("ID", "gene_id", "locus_tag", "Name")
+                    if row.attributes.get(key)
+                ),
+                (),
+            )
+            for locus in values:
+                add(Gene(row.seqid, row.start, row.end, locus, row.strand), locus)
+    return tuple(
+        sorted(
+            by_locus.values(),
+            key=lambda gene: (natural_key(gene.seqid), gene.start, gene.end, gene.gene_id),
+        )
+    )
+
+
 def annotation_to_genes(
     gff_path: str | Path,
     fasta_ids: set[str],

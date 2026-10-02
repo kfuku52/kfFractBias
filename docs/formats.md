@@ -248,6 +248,59 @@ it is not evidence that the identifier is biologically an independent gene.
 
 **Working files and publication**
 
+### Prequota Self Evidence
+
+Every `selfcompare` publishes these files inside `PREFIX.synteny/`, independently
+of the requested quota. They describe the full prepared BED, before profiling
+sequence selection or denominator filtering:
+
+| File | Meaning |
+| --- | --- |
+| `self.self.anchors` | Chained nonidentity/nonmirrored self anchors before liftover and quota. |
+| `self.self.lifted.anchors` | All lifted self blocks before quota, with the same block order as the audits. |
+| `self.self.raw.blocks.tsv` | One row per lifted block: 1-based ordinal block ID, anchor-row/unique-pair counts, chromosome-local inclusive gene-rank spans and endpoint IDs for both arms; genomic spans are zero-based half-open. |
+| `self.self.raw.depth.tsv` | One row per prepared gene, including zero rows: chromosome-local rank, genomic interval, overlapping block-arm depth, unique direct anchor partners and partner-chromosome count. |
+| `self.self.raw.summary.json` | Schema 1 audit counts, full-BED gene-span/anchor coverage, block-arm depth distribution, output filenames and SHA-256 hashes. |
+
+The block TSV columns are `block_id,num_anchor_rows,num_unique_anchor_pairs`,
+then each arm's `a_`/`b_` fields: `seqid,start_rank,end_rank,start_gene,end_gene,
+start,end,num_anchor_genes,span_genes`. Block IDs correspond to ordinal `###`
+blocks in the lifted anchors, not permanent IDs across changed inputs.
+
+The depth columns are `seqid,gene_id,gene_rank,start,end,block_arm_depth,
+num_anchor_partners,num_partner_chromosomes`. Overlapping arms count separately,
+including both arms of the same block. Duplicate anchor rows do not increase
+direct partner counts. Block spans include genes between anchors, even when
+they are not directly anchored.
+
+These are observed raw-block statistics, not genome multiplication factors,
+ancestral copy numbers, homoeology calls or WGD tests. Redundant blocks and
+local segmental duplications can increase depth. A large block-span coverage
+also does not establish genome-wide coordinated duplication.
+
+`--screening none` keeps lifted anchors without quota and does not accept
+`--depth`. The default `quota` mode still requires positive `--depth N` and
+keeps its previous selected-anchor path. The Python result adds `screening`
+and `prequota_outputs`; `depth` is nullable only for the explicit unquota mode.
+Summary schema 3 adds these paths/hashes under
+`metadata.synteny_generation.prequota_evidence`. Readers of older summaries
+must tolerate their absence. The raw summary has its own schema version.
+
+The low-level `python -m kffractbias.selfscan align` accepts
+`--sequence-type prot` for a prepared `self.pep`; nucleotide `self.cds` remains
+the default. The low-level `scan --screening none --allow-empty` explicitly
+permits a valid zero-block result with header-only audits and zero coverage.
+Default scans and `selfcompare` still require retained evidence. Alignment or
+parsing failures are never converted into zero-block results.
+
+The Python `annotation_locus_order(gff, feature=..., attribute=...)` helper
+returns all resolved annotation loci in chromosome/coordinate order, including
+gene-only loci and loci without supplied FASTA sequences. It merges isoforms
+and rejects incompatible chromosomes/strands. Its full-annotation universe is
+distinct from the prepared-BED universe in these raw self-synteny audits.
+
+### Publication
+
 Comparisons retain `PREFIX.synteny/`, including prepared BED/CDS, anchors,
 `preflight.json` output-row upper bounds, and `logs/` command output. Each
 command log has a JSON record with its command, working directory, return code,

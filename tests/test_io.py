@@ -6,6 +6,7 @@ import pytest
 
 from kffractbias.io import (
     Gene,
+    annotation_locus_order,
     annotation_to_genes,
     read_bed,
     read_fasta_ids,
@@ -38,6 +39,47 @@ def test_annotation_mapping_detects_feature_and_attribute(tmp_path):
         ("tx1", 0, 12),
         ("tx2", 19, 30),
     ]
+
+
+def test_full_annotation_locus_order_includes_unsequenced_and_gene_only_loci(tmp_path):
+    gff = write(
+        tmp_path / "all.gff3",
+        "chr10\tt\tmRNA\t1\t30\t.\t+\t.\tID=t3;Parent=g3\n"
+        "chr2\tt\tmRNA\t1\t15\t.\t+\t.\tID=t1;Parent=g1\n"
+        "chr2\tt\tmRNA\t5\t20\t.\t+\t.\tID=t1b;Parent=g1\n"
+        "chr2\tt\tgene\t25\t40\t.\t+\t.\tID=intervening\n"
+        "chr2\tt\tmRNA\t50\t60\t.\t-\t.\tID=t2;Parent=g2\n",
+    )
+    loci = annotation_locus_order(gff, feature="mRNA", attribute="ID")
+    assert [(gene.seqid, gene.gene_id, gene.start, gene.end) for gene in loci] == [
+        ("chr2", "g1", 0, 20),
+        ("chr2", "intervening", 24, 40),
+        ("chr2", "g2", 49, 60),
+        ("chr10", "g3", 0, 30),
+    ]
+
+
+@pytest.mark.parametrize("seqid,strand", [("chr2", "+"), ("chr1", "-")])
+def test_full_locus_order_rejects_incompatible_isoform_intervals(tmp_path, seqid, strand):
+    gff = write(
+        tmp_path / "bad.gff3",
+        "chr1\tt\tmRNA\t1\t10\t.\t+\t.\tID=t1;Parent=g1\n"
+        f"{seqid}\tt\tmRNA\t20\t30\t.\t{strand}\t.\tID=t2;Parent=g1\n",
+    )
+    with pytest.raises(ValueError, match="incompatible annotation intervals"):
+        annotation_locus_order(gff, feature="mRNA", attribute="ID")
+
+
+def test_full_locus_order_resolves_gtf_transcripts(tmp_path):
+    gtf = write(
+        tmp_path / "all.gtf",
+        'chr1\tt\ttranscript\t1\t10\t.\t+\t.\tgene_id "g1"; transcript_id "t1";\n'
+        'chr1\tt\ttranscript\t21\t30\t.\t+\t.\tgene_id "g2"; transcript_id "t2";\n',
+    )
+    assert [
+        gene.gene_id
+        for gene in annotation_locus_order(gtf, feature="transcript", attribute="transcript_id")
+    ] == ["g1", "g2"]
 
 
 def test_duplicate_fasta_identifiers_are_rejected(tmp_path):

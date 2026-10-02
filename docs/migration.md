@@ -38,6 +38,7 @@ for what the fingerprint covers and why an installed wheel's Git fields are null
 | Malformed synteny rows silently skipped | Every data row must have valid structure and resolve to the supplied BEDs, even if its sequence is later excluded. |
 | Native JCVI self filtering and quota behavior | The chromosome-aware adapter fixes interchromosomal filtering and shares self depth constraints across both axes. Regenerate old self anchors to obtain these corrections. |
 | Overlapping arms of one self block counted once | Both arms now count toward depth in their shared interval. Regenerate self anchors; depth 1 rejects such blocks. |
+| A self depth must be assumed before inspecting raw coverage | `--screening none` without `--depth` retains all lifted self blocks. Both modes publish prequota block/depth audits; these are not ploidy or WGD estimates. |
 | Native BLAST search-task defaults | BLAST searches explicitly use `blastn`; overrides are recorded. Regenerate anchors if the old task missed divergent matches. |
 | One PNG represents the entire analysis | PNG shows only the first PDF page. Use the PDF for every chromosome/query panel. |
 | Legacy Python 2 scripts, notebooks, and bundled biological datasets in the checkout | They remain in [the pre-removal Git tree](https://github.com/kfuku52/kfFractBias/tree/af8130640d3d097b8038b291b9dd40e6a6d5050e). Current examples use small synthetic data. |

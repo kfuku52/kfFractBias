@@ -7,6 +7,9 @@ untagged development milestones, not published release artifacts. See the
 
 ## Unreleased
 
+- Export unquota self-synteny block/depth evidence, support protein self-alignment,
+  and expose complete annotation locus ordering for native WGD workflows.
+
 - Preserve literal GTF attribute values and quoted notes, reject malformed
   attributes with source lines, and prevent gene/transcript name collisions
   from merging independent loci during isoform selection.

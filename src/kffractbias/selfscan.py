@@ -15,12 +15,15 @@ from itertools import groupby
 from pathlib import Path
 
 from .io import Gene, natural_key, read_bed
+from .selfevidence import write_self_evidence
 
 Point = tuple[int, int, int]
 Block = list[Point]
 
 
-def align_self(aligner: str, cpus: int, cscore: float, self_hit_percent: float) -> None:
+def align_self(
+    aligner: str, cpus: int, cscore: float, self_hit_percent: float, sequence_type: str = "nucl"
+) -> None:
     """Use JCVI's alignment/filter stages without running its incorrect scan."""
     from jcvi.apps.align import last
     from jcvi.compara.blastfilter import main as filter_synteny_hits
@@ -29,6 +32,7 @@ def align_self(aligner: str, cpus: int, cscore: float, self_hit_percent: float) 
 
     if (
         aligner not in {"last", "blast"}
+        or sequence_type not in {"nucl", "prot"}
         or cpus < 1
         or not 0 < cscore <= 1
         or not 0 < self_hit_percent <= 100
@@ -36,7 +40,8 @@ def align_self(aligner: str, cpus: int, cscore: float, self_hit_percent: float) 
         raise ValueError("Invalid self-alignment parameters")
     raw = "self.self.last"
     if aligner == "last":
-        last(["self.cds", "self.cds", f"--cpus={cpus}"], "nucl")
+        source = "self.cds" if sequence_type == "nucl" else "self.pep"
+        last([source, source, f"--cpus={cpus}"], sequence_type)
     elif not Path(raw).is_file():
         raise ValueError("BLAST output must be prepared before self filtering")
     inverse = filtered_blastfile_name(raw, self_hit_percent, 0, inverse=True)
@@ -121,19 +126,33 @@ def write_blocks(path: Path, blocks: list[Block], genes: tuple[Gene, ...]) -> No
 
 
 def scan_self(
-    filtered: Path, liftover: Path, bed: Path, output: Path, *, bound: int, depth: int
+    filtered: Path,
+    liftover: Path,
+    bed: Path,
+    output: Path,
+    *,
+    bound: int,
+    depth: int | None,
+    screening: str = "quota",
+    allow_empty: bool = False,
 ) -> None:
     from jcvi.compara.synteny import synteny_liftover, synteny_scan
 
-    if bound < 1 or depth < 1:
-        raise ValueError("Self diagonal bound and depth must be positive")
+    if bound < 1 or screening not in {"quota", "none"}:
+        raise ValueError("Self diagonal bound must be positive and screening quota or none")
+    if screening == "quota" and (depth is None or depth < 1):
+        raise ValueError("Quota screening requires a positive self depth")
+    if screening == "none" and depth is not None:
+        raise ValueError("Unquota self screening does not accept a depth")
+    if allow_empty and screening != "none":
+        raise ValueError("Empty self evidence is supported only without quota screening")
     genes = read_bed(bed)
     hits = read_self_hits(filtered, genes, bound)
     blocks: list[Block] = []
     for chroms in sorted(hits, key=lambda pair: (natural_key(pair[0]), natural_key(pair[1]))):
         # Diagonal, identity and mirror filtering has already been done on hits.
         blocks.extend(synteny_scan(hits[chroms], 20, 20, 4, is_self=False))
-    if not blocks:
+    if not blocks and not allow_empty:
         raise ValueError("No self-synteny blocks survived the requested diagonal bound")
     write_blocks(output.parent / "self.self.anchors", blocks, genes)
 
@@ -152,6 +171,11 @@ def scan_self(
             blocks[membership[nearest]].append((left, right, score))
 
     write_blocks(output.parent / "self.self.lifted.anchors", blocks, genes)
+    write_self_evidence(blocks, genes, output.parent)
+    if screening == "none":
+        write_blocks(output, blocks, genes)
+        return
+    assert depth is not None
     selected = select_quota(blocks, genes, depth)
     if not selected:
         raise ValueError("No self-synteny blocks survived QUOTA-ALIGN")
@@ -166,16 +190,19 @@ def main() -> None:
     align.add_argument("--cpus", type=int, required=True)
     align.add_argument("--cscore", type=float, required=True)
     align.add_argument("--self-hit-percent", type=float, required=True)
+    align.add_argument("--sequence-type", choices=("nucl", "prot"), default="nucl")
     scan = commands.add_parser("scan")
     scan.add_argument("filtered", type=Path)
     scan.add_argument("liftover", type=Path)
     scan.add_argument("bed", type=Path)
     scan.add_argument("output", type=Path)
     scan.add_argument("--diagonal-bound", type=int, required=True)
-    scan.add_argument("--depth", type=int, required=True)
+    scan.add_argument("--depth", type=int)
+    scan.add_argument("--screening", choices=("quota", "none"), default="quota")
+    scan.add_argument("--allow-empty", action="store_true")
     args = parser.parse_args()
     if args.command == "align":
-        align_self(args.aligner, args.cpus, args.cscore, args.self_hit_percent)
+        align_self(args.aligner, args.cpus, args.cscore, args.self_hit_percent, args.sequence_type)
         return
     scan_self(
         args.filtered,
@@ -184,6 +211,8 @@ def main() -> None:
         args.output,
         bound=args.diagonal_bound,
         depth=args.depth,
+        screening=args.screening,
+        allow_empty=args.allow_empty,
     )
 
 

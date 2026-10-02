@@ -46,12 +46,14 @@ class SelfSyntenyRun:
     genome: PreparedGenome
     anchors_path: Path
     commands: tuple[tuple[str, ...], ...]
-    depth: int
+    depth: int | None
     quota: str
     self_hit_percent: float
     intrachromosomal_diagonal_bound: int
     tool_versions: dict[str, str | None] = field(default_factory=dict)
     blast_task: str | None = None
+    screening: str = "quota"
+    prequota_outputs: dict[str, Path] = field(default_factory=dict)
 
 
 def validate_quota(value: str) -> str:
@@ -350,7 +352,7 @@ def run_self_synteny(
     cds: str | Path,
     gff: str | Path,
     work_dir: str | Path,
-    depth: int,
+    depth: int | None,
     cpus: int,
     cscore: float,
     aligner: str,
@@ -362,10 +364,17 @@ def run_self_synteny(
     isoform_policy: str = "error",
     before_alignment: Callable[[PreparedGenome, PreparedGenome], None] | None = None,
     blast_task: str = "blastn",
+    screening: str = "quota",
 ) -> SelfSyntenyRun:
     """Run JCVI alignment with chromosome-aware self chaining and shared-axis quota."""
+    if screening not in {"quota", "none"}:
+        raise ValueError("Self screening must be quota or none")
+    if screening == "quota" and depth is None:
+        raise ValueError("Quota screening requires --depth")
+    if screening == "none" and depth is not None:
+        raise ValueError("--screening none does not accept --depth")
     _validate_self_parameters(
-        depth,
+        depth if depth is not None else 1,
         cpus,
         cscore,
         self_hit_percent,
@@ -406,8 +415,12 @@ def run_self_synteny(
     if len(filtered_candidates) != 1:
         raise RuntimeError("Could not identify the unique JCVI filtered self-alignment")
     filtered_alignment = filtered_candidates[0]
-    quota = f"{depth}:{depth}"
-    anchors_path = work_dir / f"self.self.lifted.{depth}x{depth}.anchors"
+    quota = f"{depth}:{depth}" if screening == "quota" else "none"
+    anchors_path = work_dir / (
+        f"self.self.lifted.{depth}x{depth}.anchors"
+        if screening == "quota"
+        else "self.self.lifted.anchors"
+    )
     scan_command = (
         sys.executable,
         "-m",
@@ -418,7 +431,8 @@ def run_self_synteny(
         str(genome.bed_path),
         str(anchors_path),
         f"--diagonal-bound={intrachromosomal_diagonal_bound}",
-        f"--depth={depth}",
+        f"--screening={screening}",
+        *((f"--depth={depth}",) if depth is not None else ()),
     )
     _run_checked(
         scan_command, cwd=work_dir, description="Chromosome-aware JCVI self scan and QUOTA-ALIGN"
@@ -428,6 +442,19 @@ def run_self_synteny(
             f"JCVI did not create the expected self quota-filtered anchors file: {anchors_path}"
         )
     commands = [*blast_commands, alignment_command, scan_command]
+    prequota_outputs = {
+        key: work_dir / filename
+        for key, filename in {
+            "scan_anchors": "self.self.anchors",
+            "lifted_anchors": "self.self.lifted.anchors",
+            "blocks": "self.self.raw.blocks.tsv",
+            "depth": "self.self.raw.depth.tsv",
+            "summary": "self.self.raw.summary.json",
+        }.items()
+    }
+    for path in prequota_outputs.values():
+        if not path.is_file() or path.stat().st_size == 0:
+            raise RuntimeError(f"Self scan did not create its required prequota evidence: {path}")
     return SelfSyntenyRun(
         genome=genome,
         anchors_path=anchors_path,
@@ -438,4 +465,6 @@ def run_self_synteny(
         intrachromosomal_diagonal_bound=intrachromosomal_diagonal_bound,
         tool_versions=_tool_versions(aligner),
         blast_task=blast_task if aligner == "blast" else None,
+        screening=screening,
+        prequota_outputs=prequota_outputs,
     )
