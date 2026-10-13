@@ -1188,7 +1188,7 @@ wheels = [
 
 [[package]]
 name = "kffractbias"
-version = "0.2.0.dev2"
+version = "0.2.0.dev3"
 source = { editable = "." }
 
 [package.optional-dependencies]
