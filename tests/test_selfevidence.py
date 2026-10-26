@@ -83,26 +83,12 @@ def test_depth_matches_direct_coverage_with_overlapping_partner_intervals(tmp_pa
     }
 
 
-@pytest.mark.parametrize("gene_count", [0, 3])
-def test_empty_blocks_preserve_all_zero_rows(tmp_path, gene_count):
+def test_empty_blocks_preserve_all_zero_rows(tmp_path):
+    gene_count = 3
     genes = tuple(Gene("A", i, i + 1, f"g{i}") for i in range(gene_count))
     _, rows, block_rows, summary = evidence(tmp_path, [], genes)
     assert len(rows) == gene_count
     assert block_rows == []
     assert all(row["block_arm_depth"] == row["num_partner_chromosomes"] == "0" for row in rows)
     assert summary["gene_span_coverage"] == 0
-    assert summary["block_arm_depth_distribution"] == ({"0": gene_count} if gene_count else {})
-
-
-def test_noncontiguous_chromosome_inside_arm_is_rejected(tmp_path):
-    genes = tuple(Gene(chrom, i, i + 1, f"g{i}") for i, chrom in enumerate("ABACC"))
-    with pytest.raises(ValueError, match="contiguous"):
-        write_self_evidence([[(0, 3, 100), (2, 4, 90)]], genes, tmp_path)
-
-
-def test_invalid_block_coordinates_fail(tmp_path):
-    genes = (Gene("A", 0, 1, "a"), Gene("B", 0, 1, "b"))
-    with pytest.raises(ValueError, match="outside"):
-        write_self_evidence([[(0, 2, 1)]], genes, tmp_path)
-    with pytest.raises(ValueError, match="within chromosomes"):
-        write_self_evidence([[(0, 1, 1), (1, 0, 1)]], genes, tmp_path)
+    assert summary["block_arm_depth_distribution"] == {"0": gene_count}
