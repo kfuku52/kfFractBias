@@ -62,6 +62,10 @@ untagged development milestones, not published release artifacts. See the
 - Cache locked CI dependencies and add fast development checks, independent
   numeric oracles, scientific integration assertions, and a synthetic benchmark.
 
+## 0.2.0.dev4 - 2026-10-26
+
+- Dependabot dependency update (automated metadata).
+
 ## 0.2.0.dev3 - 2026-10-13
 
 - Notify the central Dependabot controller after prepared updates finish CI.
