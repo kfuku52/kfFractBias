@@ -8,6 +8,34 @@ from dataclasses import replace
 import pytest
 
 from kffractbias.analysis import AnalysisConfig, calculate_fractionation_bias
+from kffractbias.io import Gene
+from kffractbias.profiles import RetentionProfile
+
+
+def test_gene_rows_preserve_zero_single_and_naturally_sorted_matches():
+    genes = [Gene("chr1", i, i + 1, f"t{i}") for i in range(3)]
+    mappings = {
+        "t1": {"q2": {"g10"}},
+        "t2": {"q2": {"g2", "g10", "g02"}, "q10": set()},
+    }
+    profile = RetentionProfile({"chr1": genes}, ["q2", "q10"], mappings, 1, 1)
+    assert [
+        (
+            row["target_gene"],
+            row["target_rank"],
+            row["query_seqid"],
+            row["retained"],
+            row["query_genes"],
+        )
+        for row in profile.gene_rows()
+    ] == [
+        ("t0", 1, "q2", 0, ""),
+        ("t0", 1, "q10", 0, ""),
+        ("t1", 2, "q2", 1, "g10"),
+        ("t1", 2, "q10", 0, ""),
+        ("t2", 3, "q2", 1, "g02;g2;g10"),
+        ("t2", 3, "q10", 0, ""),
+    ]
 
 
 def test_streamed_and_collected_tables_are_identical(tmp_path):

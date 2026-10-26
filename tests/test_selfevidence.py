@@ -1,5 +1,6 @@
 import csv
 import json
+from collections import Counter
 
 import pytest
 
@@ -49,6 +50,54 @@ def test_overlapping_arms_count_twice_and_duplicate_anchors_once(tmp_path):
     assert rows[0]["num_anchor_rows"] == "3"
     assert rows[0]["num_unique_anchor_pairs"] == "2"
     assert depth[4]["num_anchor_partners"] == "1"
+
+
+def test_depth_matches_direct_coverage_with_overlapping_partner_intervals(tmp_path):
+    genes = tuple(Gene(chrom, i, i + 1, f"{chrom}{i}") for chrom in "ABC" for i in range(6))
+    blocks = [
+        [(0, 6, 100), (2, 8, 90)],
+        [(1, 7, 100), (3, 9, 90)],
+        [(3, 12, 100), (5, 14, 90)],
+        [(4, 10, 80), (4, 10, 80)],
+    ]
+    _, rows, _, summary = evidence(tmp_path, blocks, genes)
+    depths = [0] * len(genes)
+    chromosomes = [set() for _ in genes]
+    partners = [set() for _ in genes]
+    for block in blocks:
+        for left, right, _ in block:
+            partners[left].add(right)
+            partners[right].add(left)
+        for axis in (0, 1):
+            ranks = [point[axis] for point in block]
+            opposite_chromosome = genes[block[0][1 - axis]].seqid
+            for rank in range(min(ranks), max(ranks) + 1):
+                depths[rank] += 1
+                chromosomes[rank].add(opposite_chromosome)
+    assert [int(row["block_arm_depth"]) for row in rows] == depths
+    assert [int(row["num_partner_chromosomes"]) for row in rows] == list(map(len, chromosomes))
+    assert [int(row["num_anchor_partners"]) for row in rows] == list(map(len, partners))
+    assert summary["num_span_covered_genes"] == sum(depth > 0 for depth in depths)
+    assert summary["block_arm_depth_distribution"] == {
+        str(depth): count for depth, count in Counter(depths).items()
+    }
+
+
+@pytest.mark.parametrize("gene_count", [0, 3])
+def test_empty_blocks_preserve_all_zero_rows(tmp_path, gene_count):
+    genes = tuple(Gene("A", i, i + 1, f"g{i}") for i in range(gene_count))
+    _, rows, block_rows, summary = evidence(tmp_path, [], genes)
+    assert len(rows) == gene_count
+    assert block_rows == []
+    assert all(row["block_arm_depth"] == row["num_partner_chromosomes"] == "0" for row in rows)
+    assert summary["gene_span_coverage"] == 0
+    assert summary["block_arm_depth_distribution"] == ({"0": gene_count} if gene_count else {})
+
+
+def test_noncontiguous_chromosome_inside_arm_is_rejected(tmp_path):
+    genes = tuple(Gene(chrom, i, i + 1, f"g{i}") for i, chrom in enumerate("ABACC"))
+    with pytest.raises(ValueError, match="contiguous"):
+        write_self_evidence([[(0, 3, 100), (2, 4, 90)]], genes, tmp_path)
 
 
 def test_invalid_block_coordinates_fail(tmp_path):

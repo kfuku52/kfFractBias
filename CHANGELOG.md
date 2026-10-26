@@ -7,6 +7,11 @@ untagged development milestones, not published release artifacts. See the
 
 ## Unreleased
 
+- Avoid sorting empty/singleton retention matches and scanning all query
+  sequences for the syntenic denominator. Sweep self-evidence block spans
+  during depth output instead of visiting every covered gene in every block;
+  table contents, ordering, precision, and summary schemas are unchanged.
+
 - Refresh the development/integration lock to pypdf 6.19.0 and urllib3 2.8.0
   to resolve their reported security advisories without weakening audit checks.
 
