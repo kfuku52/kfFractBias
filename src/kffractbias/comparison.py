@@ -286,12 +286,12 @@ def aligned_windows(
     return results, shared
 
 
-def write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
-    if not rows:
+def write_rows(path: Path, rows: list[dict[str, Any]], fields: list[str] | None = None) -> None:
+    if not rows and fields is None:
         raise ValueError("No rows to write")
     with path.open("w", newline="") as handle:
         writer = csv.DictWriter(
-            handle, fieldnames=list(rows[0]), delimiter="\t", lineterminator="\n"
+            handle, fieldnames=fields or list(rows[0]), delimiter="\t", lineterminator="\n"
         )
         writer.writeheader()
         for row in rows:
@@ -404,8 +404,6 @@ def comparison_report(
             denominator=denominator,
             minimum_callable_fraction=minimum_callable_fraction,
         )
-        if not windows[0]:
-            raise ValueError("No complete reference window")
         stage = {outputs[k]: run.staging_dir / outputs[k].name for k in outputs}
         commit_paths: dict[Path, Path | None] = dict(stage)
         write_rows(
@@ -422,6 +420,22 @@ def comparison_report(
                 {"analysis_id": item.analysis_id, **r}
                 for item, p in zip(items, windows, strict=True)
                 for r in p
+            ],
+            fields=[
+                "analysis_id",
+                "target_seqid",
+                "start_gene",
+                "end_gene",
+                "start_rank",
+                "end_rank",
+                "window_size",
+                "common_callable_genes",
+                "retained_copies",
+                "total_percent",
+                "normalised_percent",
+                "copy_percent",
+                "segment_ids",
+                "status",
             ],
         )
         plot = {}

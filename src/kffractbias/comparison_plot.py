@@ -51,12 +51,15 @@ def plot_comparison(
         selector.addfont(str(path))
     selector.findfont(font_manager.FontProperties(family=family), fallback_to_default=False)
     observed = {r["target_seqid"] for r in windows[0]}
-    chromosomes = config.get("reference_seqids", sorted(observed, key=natural_key))
+    reference_names = {g.seqid for g in read_bed(items[0].target_bed)}
+    chromosomes = config.get(
+        "reference_seqids", sorted(observed or reference_names, key=natural_key)
+    )
     if (
         not chromosomes
         or len(set(chromosomes)) != len(chromosomes)
         or observed - set(chromosomes)
-        or set(chromosomes) - {g.seqid for g in read_bed(items[0].target_bed)}
+        or set(chromosomes) - reference_names
     ):
         raise ValueError("Unknown, duplicate or incomplete reference sequence display order")
     representatives = config.get("representative_seqids", chromosomes[:3])
@@ -136,11 +139,11 @@ def plot_comparison(
                 )
         axis.axhline(100, color=".6", linestyle=":", linewidth=0.5)
         axis.set_title(chrom)
-        axis.set_xlabel("Reference gene rank")
+        axis.set_xlabel("Gene rank")
         axis.spines[["top", "right"]].set_visible(False)
         if not any(math.isfinite(v) for v in y):
             axis.text(0.5, 0.5, "Not estimable", transform=axis.transAxes, ha="center")
-        upper = 102 if normalised else raw_upper
+        upper = normalised_upper if normalised else raw_upper
         axis.set_ylim(0, upper)
 
     style = {
@@ -154,6 +157,19 @@ def plot_comparison(
         "svg.fonttype": "none",
     }
     with plt.rc_context(style):
+        normalised_upper = max(
+            102,
+            max(
+                (
+                    r["normalised_percent"]
+                    for p in windows
+                    for r in p
+                    if r["normalised_percent"] is not None
+                ),
+                default=100,
+            )
+            * 1.1,
+        )
         raw_upper = max(
             102,
             max(
@@ -195,7 +211,7 @@ def plot_comparison(
                     axis.set_xlabel("Reference chromosome")
                     axis.spines[["top", "right"]].set_visible(False)
                     if normalised:
-                        axis.set_ylim(0, 102)
+                        axis.set_ylim(0, normalised_upper)
                     else:
                         axis.set_ylim(0, raw_upper)
                     if not any(values):

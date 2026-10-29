@@ -305,3 +305,31 @@ def test_five_copies_are_normalised_by_five_with_zero_and_duplicate_hits(tmp_pat
     )
     assert windows[0][0]["normalised_percent"] == pytest.approx(100 * 14 / 15)
     assert windows[0][0]["total_percent"] == pytest.approx(100 * 14 / 3)
+
+
+def test_no_complete_callable_window_preserves_loci_and_explicit_empty_outputs(tmp_path):
+    item = fixture(tmp_path)
+    path = manifest(tmp_path, [item])
+    out = tmp_path / "output"
+    result = comparison_report(
+        path,
+        out,
+        window_size=100,
+        minimum_anchors=2,
+        trim=0,
+        denominator="callable",
+        plot_config={
+            "reference_seqids": ["chr1", "chr2"],
+            "representative_seqids": ["chr1"],
+            "width_pt": 650,
+            "height_pt": 260,
+        },
+    )
+    assert result["reference_loci"] == result["common_callable_loci"] == 12
+    assert result["windows_per_analysis"] == result["estimable_windows_per_analysis"] == 0
+    assert len((out / "comparison.report_windows.tsv").read_text().splitlines()) == 1
+    assert len((out / "comparison.loci.tsv").read_text().splitlines()) == 13
+    assert all(
+        (out / ("comparison." + ext)).exists()
+        for ext in ["normalised.pdf", "raw.pdf", "profiles_all.pdf"]
+    )
