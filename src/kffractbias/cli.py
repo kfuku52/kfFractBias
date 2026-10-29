@@ -325,6 +325,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("formats", help="Describe supported synteny formats")
     subparsers.add_parser("version", help="Print the kfFractBias version")
+    report = subparsers.add_parser(
+        "report", help="Compare copy-aware profiles on one shared reference"
+    )
+    report.add_argument("--manifest", required=True, type=_path)
+    report.add_argument("--output-dir", required=True, type=_output_path)
+    report.add_argument("--prefix", default="comparison", type=_prefix)
+    report.add_argument("--window-size", type=_positive_int, default=100)
+    report.add_argument("--step-size", type=_positive_int, default=1)
+    report.add_argument("--denominator", choices=("all", "syntenic", "callable"), default="all")
+    report.add_argument("--minimum-callable-fraction", type=_unit_interval, default=1.0)
+    report.add_argument("--minimum-anchors", type=_positive_int, default=10)
+    report.add_argument("--trim", type=int, default=5)
+    report.add_argument(
+        "--raw-unmasked",
+        action="store_true",
+        help="Unmasked descriptive profiles for legacy reproduction",
+    )
+    report.add_argument("--target-seqids", action="append", default=[])
+    report.add_argument(
+        "--plot-config", type=_path, help="JSON with fonts, dimensions and representative sequences"
+    )
+    report.add_argument("--no-plot", action="store_true")
     return parser
 
 
@@ -668,6 +690,38 @@ def main(argv: Sequence[str] | None = None) -> int:
             return command_formats()
         if args.command == "version":
             print(f"kfFractBias {__version__}")
+            return 0
+        if args.command == "report":
+            from .comparison import comparison_report
+
+            config: dict[str, Any] | None = None if args.no_plot else {}
+            if args.plot_config:
+                if args.no_plot:
+                    raise ValueError("--plot-config and --no-plot are mutually exclusive")
+                config = None
+            summary = comparison_report(
+                args.manifest,
+                args.output_dir,
+                prefix=args.prefix,
+                window_size=args.window_size,
+                step_size=args.step_size,
+                denominator=args.denominator,
+                minimum_callable_fraction=args.minimum_callable_fraction,
+                minimum_anchors=args.minimum_anchors,
+                trim=args.trim,
+                raw=args.raw_unmasked,
+                target_seqids=tuple(s for v in args.target_seqids for s in v.split(",")),
+                plot_config=config,
+                plot_config_file=args.plot_config,
+            )
+            print(
+                json.dumps(
+                    {
+                        "estimable_windows_per_analysis": summary["estimable_windows_per_analysis"],
+                        "output_dir": str(args.output_dir),
+                    }
+                )
+            )
             return 0
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"kffractbias: error: {exc}", file=sys.stderr)
