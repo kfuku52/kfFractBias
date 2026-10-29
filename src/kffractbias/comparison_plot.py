@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ def plot_comparison(
     from matplotlib import font_manager
     from matplotlib.backends.backend_pdf import PdfPages
     from matplotlib.text import Text
+    from matplotlib.ticker import FuncFormatter
 
     allowed = {
         "font_family",
@@ -51,7 +53,8 @@ def plot_comparison(
         selector.addfont(str(path))
     selector.findfont(font_manager.FontProperties(family=family), fallback_to_default=False)
     observed = {r["target_seqid"] for profile in windows for r in profile}
-    reference_names = {g.seqid for g in read_bed(items[0].target_bed)}
+    reference_counts = Counter(g.seqid for g in read_bed(items[0].target_bed))
+    reference_names = set(reference_counts)
     chromosomes = config.get(
         "reference_seqids", sorted(observed or reference_names, key=natural_key)
     )
@@ -140,6 +143,14 @@ def plot_comparison(
         axis.axhline(100, color=".6", linestyle=":", linewidth=0.5)
         axis.set_title(chrom)
         axis.set_xlabel("Gene rank")
+        count = reference_counts[chrom]
+        axis.set_xlim((1, count) if count > 1 else (0.5, 1.5))
+        axis.xaxis.set_major_locator(plt.MaxNLocator(4, integer=True))
+        axis.xaxis.set_major_formatter(
+            FuncFormatter(
+                lambda value, position: f"{value / 1000:g}k" if abs(value) >= 1000 else f"{value:g}"
+            )
+        )
         axis.spines[["top", "right"]].set_visible(False)
         if not any(math.isfinite(v) for v in y):
             axis.text(0.5, 0.5, "Not estimable", transform=axis.transAxes, ha="center")
@@ -270,6 +281,8 @@ def plot_comparison(
         "reference_seqids": chromosomes,
         "all_reference_pages": len(chromosomes),
         "copies_are_local": True,
+        "reference_gene_limits": {chrom: [1, reference_counts[chrom]] for chrom in chromosomes},
+        "rank_tick_labels": "k denotes 1000 reference genes; axes retain full reference ranks",
         "total_black": "normalised total divides the copy count by expected_copies",
         "coloured_tracks": "individual local copies; lines break at native segment changes and missing windows",
     }

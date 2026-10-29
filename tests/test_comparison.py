@@ -464,7 +464,21 @@ def test_pairwise_cli_and_invalid_scope_before_output(tmp_path):
     assert not (tmp_path / "bad").exists()
 
 
-def test_pairwise_plots_allow_different_chromosomes_and_empty_first_pair(tmp_path):
+def test_pairwise_plots_allow_different_chromosomes_and_empty_first_pair(tmp_path, monkeypatch):
+    import matplotlib.figure
+
+    observed_axes = []
+    original = matplotlib.figure.Figure.savefig
+
+    def capture(figure, *args, **kwargs):
+        observed_axes.extend(
+            (axis.get_title(), axis.get_xlim())
+            for axis in figure.axes
+            if axis.get_xlabel() == "Gene rank"
+        )
+        return original(figure, *args, **kwargs)
+
+    monkeypatch.setattr(matplotlib.figure.Figure, "savefig", capture)
     a, b = fixture(tmp_path, "a"), fixture(tmp_path, "b")
     # Keep independent assignments but leave fewer than W detected loci for a.
     a.synteny_file.write_text("###\nt1_0\ta1A0\t100\n")
@@ -480,3 +494,6 @@ def test_pairwise_plots_allow_different_chromosomes_and_empty_first_pair(tmp_pat
     assert summary["counts_per_analysis"]["a"]["windows"] == 0
     assert summary["counts_per_analysis"]["b"]["windows"] == 8
     assert summary["plot"]["reference_seqids"] == ["chr1", "chr2"]
+
+    assert observed_axes and all(limits == (1, 6) for _, limits in observed_axes)
+    assert summary["plot"]["reference_gene_limits"] == {"chr1": [1, 6], "chr2": [1, 6]}

@@ -7,6 +7,9 @@ untagged development milestones, not published release artifacts. See the
 
 ## Unreleased
 
+- Fix comparison profile axes to the full reference chromosome ranks across
+  species and abbreviate long rank labels for narrow publication panels.
+
 - Add independent pairwise report scope with per-analysis denominators/counts,
   independently detected local-copy tracks, and explicit schema 2; retain
   shared-report defaults, schema 1 and numerical behavior.
