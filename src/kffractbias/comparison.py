@@ -216,6 +216,7 @@ def aligned_windows(
     step_size: int,
     denominator: str,
     minimum_callable_fraction: float,
+    independent_copies: bool = False,
 ) -> tuple[list[list[dict[str, Any]]], list[bool]]:
     if window_size < 1 or step_size < 1 or denominator not in {"all", "syntenic", "callable"}:
         raise ValueError("Invalid window/step/denominator")
@@ -257,13 +258,19 @@ def aligned_windows(
                 copies: dict[str, float] = {}
                 segments: dict[str, str] = {}
                 groups = {p[i]["group_id"] for i in valid}
-                if estimable and len(groups) == 1:
+                if estimable and (independent_copies or len(groups) == 1):
                     keys = set().union(*(p[i]["copies"] for i in valid))
                     for key in sorted(keys):
                         native = {s for i in valid for s in p[i]["segments"].get(key, [])}
-                        if len(native) == 1:
+                        if native and (independent_copies or len(native) == 1):
                             copies[key] = 100 * sum(p[i]["copies"].get(key, 0) for i in valid) / n
-                            segments[key] = next(iter(native))
+                            # A changing evidence signature breaks the plotted curve.
+                            # Fragment OR does not imply physical or parental phasing.
+                            segments[key] = (
+                                json.dumps(sorted(native))
+                                if independent_copies
+                                else next(iter(native))
+                            )
                 results[a].append(
                     {
                         "target_seqid": chrom,
@@ -311,6 +318,7 @@ def comparison_report(
     window_size: int = 100,
     step_size: int = 1,
     denominator: str = "all",
+    comparison_scope: str = "shared",
     minimum_callable_fraction: float = 1.0,
     minimum_anchors: int = 10,
     trim: int = 5,
@@ -319,6 +327,8 @@ def comparison_report(
     plot_config: dict[str, Any] | None = None,
     plot_config_file: Path | None = None,
 ) -> dict[str, Any]:
+    if comparison_scope not in {"shared", "pairwise"}:
+        raise ValueError("comparison_scope must be shared or pairwise")
     if minimum_anchors < 1 or trim < 0:
         raise ValueError("Invalid callable-interior criteria")
     manifest_digest = sha256_file(manifest)
@@ -397,20 +407,36 @@ def comparison_report(
             reference = genes
             profiles.append(loci)
             audits.append({"analysis_id": item.analysis_id, **audit})
-        windows, shared = aligned_windows(
-            profiles,
-            window_size=window_size,
-            step_size=step_size,
-            denominator=denominator,
-            minimum_callable_fraction=minimum_callable_fraction,
-        )
+        options: dict[str, Any] = {
+            "window_size": window_size,
+            "step_size": step_size,
+            "denominator": denominator,
+            "minimum_callable_fraction": minimum_callable_fraction,
+        }
+        if comparison_scope == "shared":
+            windows, shared = aligned_windows(profiles, **options)
+            masks = [shared] * len(profiles)
+        else:
+            windows, masks = [], []
+            for profile in profiles:
+                pair_windows, mask = aligned_windows([profile], **options, independent_copies=raw)
+                for row in pair_windows[0]:
+                    row["callable_genes"] = row.pop("common_callable_genes")
+                    if row["status"] == "insufficient_common_callable":
+                        row["status"] = "insufficient_callable"
+                windows.append(pair_windows[0])
+                masks.append(mask)
         stage = {outputs[k]: run.staging_dir / outputs[k].name for k in outputs}
         commit_paths: dict[Path, Path | None] = dict(stage)
         write_rows(
             stage[outputs["loci"]],
             [
-                {"analysis_id": item.analysis_id, **r, "common_callable": int(shared[i])}
-                for item, p in zip(items, profiles, strict=True)
+                {
+                    "analysis_id": item.analysis_id,
+                    **r,
+                    **({"common_callable": int(mask[i])} if comparison_scope == "shared" else {}),
+                }
+                for item, p, mask in zip(items, profiles, masks, strict=True)
                 for i, r in enumerate(p)
             ],
         )
@@ -429,7 +455,7 @@ def comparison_report(
                 "start_rank",
                 "end_rank",
                 "window_size",
-                "common_callable_genes",
+                "common_callable_genes" if comparison_scope == "shared" else "callable_genes",
                 "retained_copies",
                 "total_percent",
                 "normalised_percent",
@@ -448,7 +474,7 @@ def comparison_report(
                 if key not in {"loci", "windows", "summary"}:
                     commit_paths[outputs[key]] = None
         summary = {
-            "schema_version": 1,
+            "schema_version": 1 if comparison_scope == "shared" else 2,
             "program": "kfFractBias",
             "program_version": __version__,
             "analysis_mode": "reference_aligned_copy_profiles",
@@ -458,6 +484,7 @@ def comparison_report(
                 "window_size": window_size,
                 "step_size": step_size,
                 "denominator": denominator,
+                "comparison_scope": comparison_scope,
                 "minimum_callable_fraction": minimum_callable_fraction,
                 "minimum_anchors": minimum_anchors,
                 "trim": trim,
@@ -474,10 +501,7 @@ def comparison_report(
                 for i in items
             ],
             "audits": audits,
-            "reference_loci": len(shared),
-            "common_callable_loci": sum(shared),
-            "windows_per_analysis": len(windows[0]),
-            "estimable_windows_per_analysis": sum(r["status"] == "estimated" for r in windows[0]),
+            "reference_loci": len(profiles[0]),
             "interpretation": "Exploratory syntelog detection conditional on annotation, alignments and local assignments; not validated ancestral gene loss.",
             "plot": plot,
             "output_sha256": {
@@ -486,6 +510,27 @@ def comparison_report(
                 if (v := commit_paths[p]) is not None and k != "summary"
             },
         }
+        if comparison_scope == "shared":
+            summary.update(
+                common_callable_loci=sum(masks[0]),
+                windows_per_analysis=len(windows[0]),
+                estimable_windows_per_analysis=sum(r["status"] == "estimated" for r in windows[0]),
+            )
+        else:
+            summary["counts_per_analysis"] = {
+                item.analysis_id: {
+                    "callable_loci": sum(mask),
+                    "selected_reference_loci": sum(
+                        denominator == "all"
+                        or (denominator == "callable" and bool(r["callable"]))
+                        or (denominator == "syntenic" and r["retained_copies"] > 0)
+                        for r in profile
+                    ),
+                    "windows": len(rows),
+                    "estimable_windows": sum(r["status"] == "estimated" for r in rows),
+                }
+                for item, profile, rows, mask in zip(items, profiles, windows, masks, strict=True)
+            }
         stage[outputs["summary"]].write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
         run.commit(commit_paths)
     return summary

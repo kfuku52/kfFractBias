@@ -50,7 +50,7 @@ def plot_comparison(
     for path in config.get("font_files", []):
         selector.addfont(str(path))
     selector.findfont(font_manager.FontProperties(family=family), fallback_to_default=False)
-    observed = {r["target_seqid"] for r in windows[0]}
+    observed = {r["target_seqid"] for profile in windows for r in profile}
     reference_names = {g.seqid for g in read_bed(items[0].target_bed)}
     chromosomes = config.get(
         "reference_seqids", sorted(observed or reference_names, key=natural_key)
@@ -224,7 +224,7 @@ def plot_comparison(
                             trace.set_ylabel("Syntelog detection (%)")
                         trace.xaxis.set_major_locator(plt.MaxNLocator(2))
                 figure.supxlabel(
-                    "Black: summed copies / expected depth"
+                    "Black: sum / expected depth; colours: local copies (unphased)"
                     if normalised
                     else "Black: summed copies; colours: local copies (unphased)"
                 )

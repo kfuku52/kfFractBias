@@ -333,3 +333,150 @@ def test_no_complete_callable_window_preserves_loci_and_explicit_empty_outputs(t
         (out / ("comparison." + ext)).exists()
         for ext in ["normalised.pdf", "raw.pdf", "profiles_all.pdf"]
     )
+
+
+@pytest.mark.parametrize(
+    "denominator,raw", [("all", False), ("callable", False), ("syntenic", True), ("all", True)]
+)
+def test_pairwise_windows_are_invariant_to_other_analyses(tmp_path, denominator, raw):
+    a, b = fixture(tmp_path, "a"), fixture(tmp_path, "b")
+    # The second pair lacks all evidence on chr2 and one reference locus on chr1.
+    b.synteny_file.write_text(
+        "".join(
+            line
+            for line in b.synteny_file.read_text().splitlines(keepends=True)
+            if not line.startswith(("t2_", "t1_1\t"))
+        )
+    )
+    config = {
+        "window_size": 3,
+        "minimum_anchors": 2,
+        "trim": 0,
+        "comparison_scope": "pairwise",
+        "denominator": denominator,
+        "raw": raw,
+    }
+    multi = comparison_report(manifest(tmp_path, [b, a]), tmp_path / "multi", **config)
+    with (tmp_path / "multi/comparison.report_windows.tsv").open() as stream:
+        multi_rows = list(csv.DictReader(stream, delimiter="\t"))
+    for item in [a, b]:
+        single_dir = tmp_path / item.analysis_id
+        single = comparison_report(manifest(tmp_path, [item]), single_dir, **config)
+        with (single_dir / "comparison.report_windows.tsv").open() as stream:
+            single_rows = list(csv.DictReader(stream, delimiter="\t"))
+        assert [r for r in multi_rows if r["analysis_id"] == item.analysis_id] == single_rows
+        assert (
+            multi["counts_per_analysis"][item.analysis_id]
+            == single["counts_per_analysis"][item.analysis_id]
+        )
+    assert multi["schema_version"] == 2
+    assert "common_callable_loci" not in multi
+    assert all("common_callable_genes" not in row for row in multi_rows)
+    assert multi["counts_per_analysis"]["a"]["selected_reference_loci"] == 12
+    if denominator == "syntenic":
+        assert multi["counts_per_analysis"]["b"]["selected_reference_loci"] == 5
+        assert multi["counts_per_analysis"]["b"]["windows"] == 3
+        first = next(r for r in multi_rows if r["analysis_id"] == "b")
+        assert first["start_gene"] == "t1_0" and first["end_gene"] == "t1_3"
+        assert float(first["normalised_percent"]) == pytest.approx(100 * 5 / 6)
+
+
+def test_pairwise_copy_curves_do_not_require_all_copies_callable(tmp_path):
+    item = fixture(tmp_path)
+    item.synteny_file.write_text(
+        "".join(
+            line
+            for line in item.synteny_file.read_text().splitlines(keepends=True)
+            if "\tfirst1B" not in line
+        )
+    )
+    _, p, _ = build_loci(item, minimum_anchors=2, trim=0, raw=True)
+    assert all(not r["group_id"] for r in p[:6])
+    out = tmp_path / "pair"
+    comparison_report(
+        manifest(tmp_path, [item]),
+        out,
+        comparison_scope="pairwise",
+        raw=True,
+        window_size=3,
+        denominator="syntenic",
+        minimum_anchors=2,
+        trim=0,
+    )
+    with (out / "comparison.report_windows.tsv").open() as stream:
+        row = next(csv.DictReader(stream, delimiter="\t"))
+    assert json.loads(row["copy_percent"]) == {"G1:A": 100}
+    assert float(row["normalised_percent"]) == 50
+
+
+def test_pairwise_fragment_or_and_native_segment_signature(tmp_path):
+    item = fixture(tmp_path)
+    item.query_bed.write_text(item.query_bed.read_text() + "fragment\t0\t90\textra\n")
+    item.mapping_file.write_text(item.mapping_file.read_text() + "extra\tG1\tA\tfragment\n")
+    item.synteny_file.write_text(
+        item.synteny_file.read_text() + "###\nt1_0\textra\t100\nt1_0\textra\t100\n"
+    )
+    _, loci, _ = build_loci(item, raw=True, minimum_anchors=2, trim=0)
+    rows, _ = aligned_windows(
+        [loci],
+        window_size=3,
+        step_size=1,
+        denominator="syntenic",
+        minimum_callable_fraction=1,
+        independent_copies=True,
+    )
+    first, second = rows[0][:2]
+    assert first["copy_percent"]["G1:A"] == second["copy_percent"]["G1:A"] == 100
+    assert first["retained_copies"] == 5
+    assert len(json.loads(first["segment_ids"]["G1:A"])) == 2
+    assert first["segment_ids"]["G1:A"] != second["segment_ids"]["G1:A"]
+
+
+def test_pairwise_cli_and_invalid_scope_before_output(tmp_path):
+    item = fixture(tmp_path)
+    path = manifest(tmp_path, [item])
+    out = tmp_path / "out"
+    assert (
+        main(
+            [
+                "report",
+                "--manifest",
+                str(path),
+                "--output-dir",
+                str(out),
+                "--window-size",
+                "3",
+                "--comparison-scope",
+                "pairwise",
+                "--raw-unmasked",
+                "--denominator",
+                "syntenic",
+                "--no-plot",
+            ]
+        )
+        == 0
+    )
+    summary = json.loads((out / "comparison.report.json").read_text())
+    assert summary["parameters"]["comparison_scope"] == "pairwise"
+    assert summary["counts_per_analysis"]["first"]["estimable_windows"] == 8
+    with pytest.raises(ValueError, match="comparison_scope"):
+        comparison_report(path, tmp_path / "bad", comparison_scope="unknown")
+    assert not (tmp_path / "bad").exists()
+
+
+def test_pairwise_plots_allow_different_chromosomes_and_empty_first_pair(tmp_path):
+    a, b = fixture(tmp_path, "a"), fixture(tmp_path, "b")
+    # Keep independent assignments but leave fewer than W detected loci for a.
+    a.synteny_file.write_text("###\nt1_0\ta1A0\t100\n")
+    summary = comparison_report(
+        manifest(tmp_path, [a, b]),
+        tmp_path / "out",
+        comparison_scope="pairwise",
+        raw=True,
+        denominator="syntenic",
+        window_size=3,
+        plot_config={"width_pt": 650, "height_pt": 520},
+    )
+    assert summary["counts_per_analysis"]["a"]["windows"] == 0
+    assert summary["counts_per_analysis"]["b"]["windows"] == 8
+    assert summary["plot"]["reference_seqids"] == ["chr1", "chr2"]

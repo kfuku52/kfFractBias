@@ -426,3 +426,7 @@ If you use kfFractBias, cite the original FractBias publication:
 MIT. The original copyright and license are retained in [`LICENSE`](LICENSE).
 
 Shared-reference copy-aware reports are available with `kffractbias report`; see [the comparison guide](docs/comparison.md). Existing `calculate`, `compare` and `selfcompare` outputs are unchanged.
+
+Independent outgroup/query reports are available with
+`report --comparison-scope pairwise`; see [pairwise report denominators and
+outputs](docs/comparison.md#independent-pairwise-reports).

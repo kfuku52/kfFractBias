@@ -58,3 +58,10 @@ require `calculate --self` and the same BED on both axes. That reuse changes
 profiling only. It cannot repair anchors lost or incorrectly selected by an
 older aligner, self filter, or quota stage. See the reuse commands in the
 [README](../README.md) and [calculation rules](methods.md).
+
+## Independent reports in 0.2.0.dev7
+
+`report --comparison-scope pairwise` is an opt-in schema-2 report. Existing
+shared reports keep schema 1, their columns, and numerical behavior. Consumers
+of pairwise reports must read per-analysis counts and `callable_genes`; see
+[comparison reports](comparison.md#independent-pairwise-reports).

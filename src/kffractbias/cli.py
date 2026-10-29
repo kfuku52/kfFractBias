@@ -334,6 +334,12 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--window-size", type=_positive_int, default=100)
     report.add_argument("--step-size", type=_positive_int, default=1)
     report.add_argument("--denominator", choices=("all", "syntenic", "callable"), default="all")
+    report.add_argument(
+        "--comparison-scope",
+        choices=("shared", "pairwise"),
+        default="shared",
+        help="Shared reference opportunities or independent reference/query pairs (default: shared)",
+    )
     report.add_argument("--minimum-callable-fraction", type=_unit_interval, default=1.0)
     report.add_argument("--minimum-anchors", type=_positive_int, default=10)
     report.add_argument("--trim", type=int, default=5)
@@ -706,6 +712,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 window_size=args.window_size,
                 step_size=args.step_size,
                 denominator=args.denominator,
+                comparison_scope=args.comparison_scope,
                 minimum_callable_fraction=args.minimum_callable_fraction,
                 minimum_anchors=args.minimum_anchors,
                 trim=args.trim,
@@ -717,7 +724,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(
                 json.dumps(
                     {
-                        "estimable_windows_per_analysis": summary["estimable_windows_per_analysis"],
+                        **(
+                            {"counts_per_analysis": summary["counts_per_analysis"]}
+                            if args.comparison_scope == "pairwise"
+                            else {
+                                "estimable_windows_per_analysis": summary[
+                                    "estimable_windows_per_analysis"
+                                ]
+                            }
+                        ),
                         "output_dir": str(args.output_dir),
                     }
                 )

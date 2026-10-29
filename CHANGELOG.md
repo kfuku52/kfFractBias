@@ -7,6 +7,10 @@ untagged development milestones, not published release artifacts. See the
 
 ## Unreleased
 
+- Add independent pairwise report scope with per-analysis denominators/counts,
+  independently detected local-copy tracks, and explicit schema 2; retain
+  shared-report defaults, schema 1 and numerical behavior.
+
 - Avoid sorting empty/singleton retention matches and scanning all query
   sequences for the syntenic denominator. Sweep self-evidence block spans
   during depth output instead of visiting every covered gene in every block;

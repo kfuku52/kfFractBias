@@ -312,3 +312,10 @@ run completion and check hashes when they need a consistent set; multi-file
 atomicity across power loss or SIGKILL is not promised. A successful rerun
 replaces existing results at the same prefix, and `--no-plot` removes old plots
 for that prefix. Lock-file presence alone does not indicate an active run.
+
+**Copy-aware comparison reports**
+
+The separate `report` command has shared schema 1 and opt-in independent
+pairwise schema 2. Their locus/window fields, counts and missingness are
+described in [comparison reports](comparison.md). The `calculate`, `compare`
+and `selfcompare` formats above are unchanged.

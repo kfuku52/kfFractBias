@@ -24,3 +24,43 @@ The black trace shows total detected copies divided by expected depth in normali
 `--plot-config` accepts JSON keys `font_family`, `font_size`, `font_files`, `width_pt`, `height_pt`, `dpi`, `reference_seqids`, and `representative_seqids`. Defaults are DejaVu Sans, 8 pt, 518.4 pt wide, 180 pt per species, 300 dpi, and the first three reference sequences. `reference_seqids` explicitly orders displayed reference chromosomes and preserves empty chromosomes as not estimable. It must contain every observed window sequence and may only name sequences present in the reference BED. Font-file paths are relative to this JSON. Text bounds and resolved fonts are verified before publication.
 
 `--raw-unmasked` is a separate descriptive historical mode: it counts native query sequences (or provided copy mappings) without callable-interior masking. It must not be interpreted as a matched absence analysis. Modern JCVI anchors do not reproduce an older CoGe/SynMap analysis merely because window parameters agree.
+
+## Independent pairwise reports
+
+Use `--comparison-scope pairwise` to aggregate each reference/query comparison
+independently while keeping the same reference BED coordinates. The default
+`shared` retains the existing common-mask behavior and schema 1.
+
+```bash
+kffractbias report --manifest comparisons.tsv --output-dir pairwise_report \
+  --comparison-scope pairwise --raw-unmasked --denominator syntenic \
+  --window-size 100 --step-size 1
+```
+
+Each pair selects its own denominator before windowing: `syntenic` uses that
+pair's detected reference loci, `all` uses every selected reference locus, and
+`callable` uses that pair's callable loci. The masked mode retains the existing
+within-pair callability rules. `--raw-unmasked` instead counts observed local
+copies without requiring all expected copies to be callable. An absent match
+means no syntelog detected, not demonstrated gene loss. Raw copy curves are
+computed independently of other copies; native segment signatures break curves
+when their evidence changes, including fragment-set changes. Fragment hits are
+still combined by OR for each reference gene/local copy. Copies remain local,
+not genome-wide phased parental identities.
+
+Pairwise reports use **schema 2**. Locus rows retain the per-analysis `callable`
+field and omit `common_callable`. Window rows use `callable_genes` and status
+`insufficient_callable` in place of their `common` counterparts. In unmasked
+mode every selected reference locus is countable, including a locus with no
+detected match when the denominator is `all`. The summary's
+`counts_per_analysis` maps each analysis ID to `callable_loci`,
+`selected_reference_loci`, `windows`, and `estimable_windows`. It omits the
+shared scalar counts because denominators and window counts can differ.
+Single-pair and multi-pair runs give identical numerical rows for each pair,
+regardless of other pairs' evidence or order. Original reference ranks and
+window endpoint genes remain in the output to locate independently chosen
+windows. Their physical spans can differ across pairs.
+
+Boxplots summarize each pair's own windows. They are descriptive, not matched
+observations for species-level inference. Display the per-pair denominator and
+window counts, and assess `all` as a denominator sensitivity analysis.
