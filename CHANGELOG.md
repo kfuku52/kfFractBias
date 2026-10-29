@@ -62,6 +62,11 @@ untagged development milestones, not published release artifacts. See the
 - Cache locked CI dependencies and add fast development checks, independent
   numeric oracles, scientific integration assertions, and a synthetic benchmark.
 
+## 0.2.0.dev5 - 2026-10-29
+
+- Refresh locked Brotli, certifi, filelock, msgpack, Pillow, pypdf and setuptools to resolve integration-environment audit findings.
+- Numerical fractionation calculations are unchanged.
+
 ## 0.2.0.dev4 - 2026-10-29
 
 - Add shared-reference, copy-aware reports with explicit callability, fragment deduplication and depth normalisation.
