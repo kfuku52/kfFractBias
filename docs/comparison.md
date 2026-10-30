@@ -23,6 +23,57 @@ The black trace shows total detected copies divided by expected depth in normali
 
 `--plot-config` accepts JSON keys `font_family`, `font_size`, `font_files`, `width_pt`, `height_pt`, `dpi`, `reference_seqids`, and `representative_seqids`. Defaults are DejaVu Sans, 8 pt, 518.4 pt wide, 180 pt per species, 300 dpi, and the first three reference sequences. `reference_seqids` explicitly orders displayed reference chromosomes and preserves empty chromosomes as not estimable. It must contain every observed window sequence and may only name sequences present in the reference BED. Font-file paths are relative to this JSON. Text bounds and resolved fonts are verified before publication.
 
+### Publication styles and stable series colours
+
+The plot configuration also accepts:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `palette` | `categorical` | `categorical` preserves the first ten category colours and extends without cycling; `pastel` mixes the category colours with white. |
+| `series_colours` | `{}` | Nested `analysis_id` → copy/sequence label → opaque Matplotlib colour string overrides. |
+| `total_colour` | `black` | Colour of the total trace. |
+| `series_alpha` | `0.85` | Individual trace opacity, greater than zero and at most one. |
+| `legend` | `text` | `text`, `graphical` (line samples), or `none`. |
+| `all_profiles_scale` | `normalised` | `normalised` divides totals by expected copies; `raw` uses the summed percentage in every all-reference PDF page. |
+
+Colours are assigned once per analysis from its complete input label order,
+then reused in all reference panels, normalised/raw figures and all-reference
+pages. A label retains its colour when a panel lacks another series or when
+window filtering removes that series. In native unmasked mode, labels are
+query BED sequence IDs. With a mapping file, labels are its `copy` values,
+shared across local groups; they do not imply genome-wide parental phasing.
+Unknown analysis IDs or labels and invalid/transparent colour strings are
+rejected. An override for a valid input label without plotted evidence is
+recorded in `unused_series_colour_labels`.
+
+For example, a plot configuration for a manifest analysis named `query_a`
+with native query sequences `chr8` and `chr17` can contain:
+
+```json
+{
+  "width_pt": 518.4,
+  "height_pt": 518.4,
+  "palette": "pastel",
+  "series_colours": {
+    "query_a": {"chr8": "#e6b979", "chr17": "#8bb9dc"}
+  },
+  "total_colour": "#b53c31",
+  "series_alpha": 0.9,
+  "legend": "graphical",
+  "all_profiles_scale": "raw"
+}
+```
+
+Replace the IDs with labels from the supplied inputs. The same configuration
+can be passed as the Python API's `plot_config` object. Box interiors are
+white. No global heading is added; report the window size, denominator and
+total normalisation in the figure caption. The report JSON records resolved
+colours, opacity, legend mode and all-reference scale in `plot`, alongside
+the requested configuration in `parameters.plot_config`. Styling does not
+alter locus/window TSVs or denominator selection. The legacy `total_black`
+metadata key retains its normalisation description; `total_colour` records
+the actual line colour.
+
 `--raw-unmasked` is a separate descriptive historical mode: it counts native query sequences (or provided copy mappings) without callable-interior masking. It must not be interpreted as a matched absence analysis. Modern JCVI anchors do not reproduce an older CoGe/SynMap analysis merely because window parameters agree.
 
 ## Independent pairwise reports

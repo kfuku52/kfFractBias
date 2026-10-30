@@ -409,6 +409,39 @@ def test_pairwise_copy_curves_do_not_require_all_copies_callable(tmp_path):
     assert float(row["normalised_percent"]) == 50
 
 
+def test_publication_style_does_not_change_locus_or_window_tables(tmp_path):
+    item = fixture(tmp_path)
+    path = manifest(tmp_path, [item])
+    options = {
+        "comparison_scope": "pairwise",
+        "raw": True,
+        "window_size": 3,
+        "minimum_anchors": 2,
+        "trim": 0,
+        "denominator": "syntenic",
+    }
+    baseline = comparison_report(path, tmp_path / "tables", **options)
+    styled = comparison_report(
+        path,
+        tmp_path / "styled",
+        **options,
+        plot_config={
+            "palette": "pastel",
+            "series_colours": {"first": {"A": "#8bb9dc", "B": "#e6b979"}},
+            "total_colour": "#b53c31",
+            "legend": "graphical",
+            "all_profiles_scale": "raw",
+            "width_pt": 650,
+            "height_pt": 300,
+        },
+    )
+    for suffix in ["loci.tsv", "report_windows.tsv"]:
+        assert (tmp_path / "tables" / ("comparison." + suffix)).read_bytes() == (
+            tmp_path / "styled" / ("comparison." + suffix)
+        ).read_bytes()
+    assert baseline["counts_per_analysis"] == styled["counts_per_analysis"]
+
+
 def test_pairwise_fragment_or_and_native_segment_signature(tmp_path):
     item = fixture(tmp_path)
     item.query_bed.write_text(item.query_bed.read_text() + "fragment\t0\t90\textra\n")

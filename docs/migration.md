@@ -1,5 +1,13 @@
 # Updating an older checkout
 
+Comparison plots now keep a sequence/copy colour fixed across reference panels
+and extend categorical colours beyond ten series. These visual corrections do
+not change retention calculations or TSV schemas. The optional publication
+settings and resolved colour metadata are documented in
+[comparison styles](comparison.md#publication-styles-and-stable-series-colours).
+The all-reference PDF still defaults to expected-copy normalisation; select
+`all_profiles_scale: "raw"` for summed percentages.
+
 The current `master` line is a development build identified by a `.dev` version.
 Historical 0.1.3 and 0.1.4 were untagged milestones; different commits could
 report the same version while implementing different behavior. The

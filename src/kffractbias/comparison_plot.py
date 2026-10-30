@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import colorsys
 import math
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from .comparison import ComparisonInput
+from .comparison import ComparisonInput, table
 from .io import natural_key, read_bed, sha256_file
 
 
@@ -24,6 +25,9 @@ def plot_comparison(
     import matplotlib.pyplot as plt
     from matplotlib import font_manager
     from matplotlib.backends.backend_pdf import PdfPages
+    from matplotlib.colors import to_hex, to_rgba
+    from matplotlib.legend_handler import HandlerTuple
+    from matplotlib.lines import Line2D
     from matplotlib.text import Text
     from matplotlib.ticker import FuncFormatter
 
@@ -36,9 +40,80 @@ def plot_comparison(
         "dpi",
         "representative_seqids",
         "reference_seqids",
+        "palette",
+        "series_colours",
+        "total_colour",
+        "series_alpha",
+        "legend",
+        "all_profiles_scale",
     }
     if set(config) - allowed:
         raise ValueError("Unsupported comparison plot configuration")
+    palette = config.get("palette", "categorical")
+    legend = config.get("legend", "text")
+    all_scale = config.get("all_profiles_scale", "normalised")
+    if palette not in ("categorical", "pastel"):
+        raise ValueError("palette must be categorical or pastel")
+    if legend not in ("text", "graphical", "none"):
+        raise ValueError("legend must be text, graphical or none")
+    if all_scale not in ("normalised", "raw"):
+        raise ValueError("all_profiles_scale must be normalised or raw")
+    alpha = config.get("series_alpha", 0.85)
+    if isinstance(alpha, bool) or not isinstance(alpha, (int, float)) or not 0 < alpha <= 1:
+        raise ValueError("series_alpha must be a finite number in (0, 1]")
+
+    def colour(value: Any) -> str:
+        if not isinstance(value, str):
+            raise ValueError("Colours must be opaque Matplotlib colour strings")
+        try:
+            rgba = to_rgba(value)
+        except ValueError as exc:
+            raise ValueError(f"Invalid colour: {value}") from exc
+        if rgba[3] != 1:
+            raise ValueError("Colours must be opaque; use series_alpha for transparency")
+        return str(to_hex(rgba))
+
+    total_colour = colour(config.get("total_colour", "black"))
+    overrides = config.get("series_colours", {})
+    if not isinstance(overrides, dict) or set(overrides) - {i.analysis_id for i in items}:
+        raise ValueError("series_colours must map known analysis IDs to colour objects")
+
+    def default_colour(index: int) -> str:
+        # Preserve the first ten categorical colours, then extend without cycling.
+        rgb = (
+            plt.get_cmap("tab10")(index)[:3]
+            if index < 10
+            else colorsys.hls_to_rgb((index * 0.618033988749895) % 1, 0.5, 0.7)
+        )
+        if palette == "pastel":
+            rgb = tuple(0.55 + 0.45 * c for c in rgb)
+        return str(to_hex(rgb))
+
+    series_colours: dict[str, dict[str, str]] = {}
+    unused_colours: dict[str, list[str]] = {}
+    for item, rows in zip(items, windows, strict=True):
+        # Use the complete input label universe, not the labels on one reference
+        # chromosome. Filtering windows or adding a panel cannot shift a colour.
+        labels = (
+            {g.seqid for g in read_bed(item.query_bed)}
+            if item.mapping_file is None
+            else {
+                r["copy"]
+                for r in table(item.mapping_file, {"gene_id", "group_id", "copy", "segment_id"})
+            }
+        )
+        requested = overrides.get(item.analysis_id, {})
+        if not isinstance(requested, dict) or set(requested) - labels:
+            raise ValueError("series_colours contains an unknown copy/sequence label")
+        observed_labels = {k.split(":", 1)[1] for r in rows for k in r["copy_percent"]}
+        if observed_labels - labels:
+            raise ValueError("Plotted copy labels are absent from comparison inputs")
+        series_colours[item.analysis_id] = {
+            label: colour(requested[label]) if label in requested else default_colour(index)
+            for index, label in enumerate(sorted(labels, key=natural_key))
+            if label in observed_labels or label in requested
+        }
+        unused_colours[item.analysis_id] = sorted(set(requested) - observed_labels, key=natural_key)
     family = config.get("font_family", "DejaVu Sans")
     size = float(config.get("font_size", 8))
     width, height = (
@@ -108,7 +183,9 @@ def plot_comparison(
                     f"Text outside figure: {text.get_text()}; increase plot dimensions"
                 )
 
-    def curves(axis: Any, rows: list[dict[str, Any]], chrom: str, normalised: bool) -> None:
+    def curves(
+        axis: Any, item: ComparisonInput, rows: list[dict[str, Any]], chrom: str, normalised: bool
+    ) -> None:
         selected = [r for r in rows if r["target_seqid"] == chrom]
         x = [(r["start_rank"] + r["end_rank"]) / 2 for r in selected]
         field = "normalised_percent" if normalised else "total_percent"
@@ -117,13 +194,12 @@ def plot_comparison(
         axis.plot(
             x,
             y,
-            color="black",
+            color=total_colour,
             linewidth=1.1,
+            zorder=3,
             label="Total / expected copies" if normalised else "Total",
         )
         keys = sorted({k for r in selected for k in r["copy_percent"]}, key=natural_key)
-        categories = sorted({k.split(":", 1)[1] for k in keys}, key=natural_key)
-        palette = plt.get_cmap("tab10")
         for key in keys:
             segment_values = {r["segment_ids"][key] for r in selected if key in r["segment_ids"]}
             for segment in sorted(segment_values):
@@ -136,9 +212,10 @@ def plot_comparison(
                 axis.plot(
                     x,
                     values,
-                    color=palette(categories.index(key.split(":", 1)[1]) % 10),
+                    color=series_colours[item.analysis_id][key.split(":", 1)[1]],
                     linewidth=0.55,
-                    alpha=0.85,
+                    alpha=alpha,
+                    label=key,
                 )
         axis.axhline(100, color=".6", linestyle=":", linewidth=0.5)
         axis.set_title(chrom)
@@ -156,6 +233,40 @@ def plot_comparison(
             axis.text(0.5, 0.5, "Not estimable", transform=axis.transAxes, ha="center")
         upper = normalised_upper if normalised else raw_upper
         axis.set_ylim(0, upper)
+
+    def add_legend(figure: Any, normalised: bool) -> None:
+        if legend == "text":
+            name = "Black" if total_colour == "#000000" else "Total"
+            figure.supxlabel(
+                f"{name}: sum / expected depth; colours: local copies (unphased)"
+                if normalised
+                else f"{name}: summed copies; colours: local copies (unphased)"
+            )
+        elif legend == "graphical":
+            samples = list(dict.fromkeys(c for m in series_colours.values() for c in m.values()))[
+                :3
+            ]
+            if not samples:
+                samples = [default_colour(0)]
+            handles = [
+                Line2D([], [], color=total_colour, linewidth=1.1),
+                tuple(Line2D([], [], color=c, alpha=alpha, linewidth=0.8) for c in samples),
+                Line2D([], [], color=".6", linestyle=":", linewidth=0.5),
+            ]
+            figure.legend(
+                handles=handles,
+                labels=[
+                    "Total / expected copies" if normalised else "Total",
+                    "Chromosome/contig"
+                    if all(i.mapping_file is None for i in items)
+                    else "Local copy",
+                    "100% reference",
+                ],
+                handler_map={tuple: HandlerTuple(ndivide=None)},
+                loc="outside lower center",
+                ncol=3,
+                frameon=False,
+            )
 
     style = {
         "font.family": family,
@@ -211,6 +322,8 @@ def plot_comparison(
                         showfliers=False,
                         widths=0.6,
                         medianprops={"color": "black"},
+                        patch_artist=True,
+                        boxprops={"facecolor": "white"},
                     )
                     axis.tick_params(axis="x", labelrotation=90)
                     axis.set_title(item.species.replace("_", " "), fontstyle="italic", loc="left")
@@ -230,15 +343,11 @@ def plot_comparison(
                     sub = grid[index, 1].subgridspec(1, len(representatives))
                     for j, chrom in enumerate(representatives):
                         trace = figure.add_subplot(sub[0, j])
-                        curves(trace, rows, chrom, normalised)
+                        curves(trace, item, rows, chrom, normalised)
                         if j == 0:
                             trace.set_ylabel("Syntelog detection (%)")
                         trace.xaxis.set_major_locator(plt.MaxNLocator(2))
-                figure.supxlabel(
-                    "Black: sum / expected depth; colours: local copies (unphased)"
-                    if normalised
-                    else "Black: summed copies; colours: local copies (unphased)"
-                )
+                add_legend(figure, normalised)
                 finish(figure)
                 for ext in ["pdf", "png", "svg"]:
                     path = staged[outputs[kind + "_" + ext]]
@@ -261,13 +370,14 @@ def plot_comparison(
                 )
                 try:
                     for item, rows, axis in zip(items, windows, axes[:, 0], strict=True):
-                        curves(axis, rows, chrom, True)
+                        curves(axis, item, rows, chrom, all_scale == "normalised")
                         axis.set_title(
                             item.species.replace("_", " ") + ": " + chrom,
                             fontstyle="italic",
                             loc="left",
                         )
                         axis.set_ylabel("Syntelog detection (%)")
+                    add_legend(figure, all_scale == "normalised")
                     finish(figure)
                     pdf.savefig(figure)
                 finally:
@@ -285,4 +395,11 @@ def plot_comparison(
         "rank_tick_labels": "k denotes 1000 reference genes; axes retain full reference ranks",
         "total_black": "normalised total divides the copy count by expected_copies",
         "coloured_tracks": "individual local copies; lines break at native segment changes and missing windows",
+        "palette": palette,
+        "series_colours": series_colours,
+        "unused_series_colour_labels": unused_colours,
+        "total_colour": total_colour,
+        "series_alpha": alpha,
+        "legend": legend,
+        "all_profiles_scale": all_scale,
     }

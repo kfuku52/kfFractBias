@@ -34,6 +34,8 @@ describe this offline CLI; the upstream CoGe Wiki describes the original web too
 - long-form gene and sliding-window TSV outputs
 - JSON provenance with input hashes, parameters, and source-code identity
 - non-interactive PDF and PNG plots
+- [shared-reference publication plots](docs/comparison.md#publication-styles-and-stable-series-colours)
+  with stable sequence colours, explicit overrides, line-sample legends and selectable total scale
 
 After the software and its dependencies are installed, analysis does not need
 network access.

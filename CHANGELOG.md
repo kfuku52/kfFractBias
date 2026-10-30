@@ -7,6 +7,11 @@ untagged development milestones, not published release artifacts. See the
 
 ## Unreleased
 
+- Add stable input-wide series colours without ten-colour cycling, optional
+  pastel palettes and per-analysis overrides, total colour/opacity settings,
+  graphical legends, and raw or normalised all-reference pages. Record resolved
+  styles without changing numerical profiles or TSV schemas.
+
 - Fix comparison profile axes to the full reference chromosome ranks across
   species and abbreviate long rank labels for narrow publication panels.
 
