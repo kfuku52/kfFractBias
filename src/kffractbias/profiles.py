@@ -50,13 +50,20 @@ class RetentionProfile:
                 matches = self.mappings.get(gene.gene_id, {})
                 for query_seqid in self.query_seqids:
                     query_ids = matches.get(query_seqid, ())
+                    query_genes = ""
+                    if query_ids:
+                        query_genes = (
+                            next(iter(query_ids))
+                            if len(query_ids) == 1
+                            else ";".join(sorted(query_ids, key=natural_key))
+                        )
                     yield {
                         "target_seqid": seqid,
                         "target_gene": gene.gene_id,
                         "target_rank": rank,
                         "query_seqid": query_seqid,
                         "retained": int(bool(query_ids)),
-                        "query_genes": ";".join(sorted(query_ids, key=natural_key)),
+                        "query_genes": query_genes,
                     }
 
     def window_rows(self) -> Iterator[WindowRow]:

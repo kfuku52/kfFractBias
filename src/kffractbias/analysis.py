@@ -364,9 +364,7 @@ def _calculate(
         ordered_query_seqids = sorted(query_seqids, key=natural_key)
         target_by_seqid: dict[str, list[Gene]] = defaultdict(list)
         for gene in target_genes:
-            if config.denominator == "syntenic" and not any(
-                mappings[gene.gene_id].get(query_seqid) for query_seqid in ordered_query_seqids
-            ):
+            if config.denominator == "syntenic" and not mappings.get(gene.gene_id):
                 continue
             target_by_seqid[gene.seqid].append(gene)
 

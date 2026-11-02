@@ -7,6 +7,23 @@ untagged development milestones, not published release artifacts. See the
 
 ## Unreleased
 
+- Add stable input-wide series colours without ten-colour cycling, optional
+  pastel palettes and per-analysis overrides, total colour/opacity settings,
+  graphical legends, and raw or normalised all-reference pages. Record resolved
+  styles without changing numerical profiles or TSV schemas.
+
+- Fix comparison profile axes to the full reference chromosome ranks across
+  species and abbreviate long rank labels for narrow publication panels.
+
+- Add independent pairwise report scope with per-analysis denominators/counts,
+  independently detected local-copy tracks, and explicit schema 2; retain
+  shared-report defaults, schema 1 and numerical behavior.
+
+- Avoid sorting empty/singleton retention matches and scanning all query
+  sequences for the syntenic denominator. Sweep self-evidence block spans
+  during depth output instead of visiting every covered gene in every block;
+  table contents, ordering, precision, and summary schemas are unchanged.
+
 - Refresh the development/integration lock to pypdf 6.19.0 and urllib3 2.8.0
   to resolve their reported security advisories without weakening audit checks.
 
@@ -57,9 +74,24 @@ untagged development milestones, not published release artifacts. See the
 - Cache locked CI dependencies and add fast development checks, independent
   numeric oracles, scientific integration assertions, and a synthetic benchmark.
 
-## 0.2.0.dev4 - 2026-10-26
+## 0.2.0.dev10 - 2026-11-02
 
 - Dependabot dependency update (automated metadata).
+
+## 0.2.0.dev6 - 2026-10-29
+
+- Preserve locus tables, summary counts and explicit not-estimable figures when a shared callable set cannot support complete windows.
+
+## 0.2.0.dev5 - 2026-10-29
+
+- Refresh locked Brotli, certifi, filelock, msgpack, Pillow, pypdf and setuptools to resolve integration-environment audit findings.
+- Numerical fractionation calculations are unchanged.
+
+## 0.2.0.dev4 - 2026-10-29
+
+- Add shared-reference, copy-aware reports with explicit callability, fragment deduplication and depth normalisation.
+- Add comparison boxplots, local-copy profiles and all-reference pages with font and bounds validation.
+- Preserve existing commands and output formats.
 
 ## 0.2.0.dev3 - 2026-10-13
 

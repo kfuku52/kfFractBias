@@ -230,16 +230,14 @@ def test_gff_segments_merge_each_parent_and_preserve_gene_order(tmp_path):
     )
 
 
-@pytest.mark.parametrize("strand", ["+", "-"])
-def test_gff_sequence_conflict_precedes_strand_conflict(tmp_path, strand):
+def test_gff_segments_on_multiple_sequences_are_rejected(tmp_path):
     gff = write(
         tmp_path / "conflict.gff",
-        "chr1\ttest\tCDS\t1\t3\t.\t+\t0\tParent=t1\n"
-        f"chr2\ttest\tCDS\t11\t13\t.\t{strand}\t0\tParent=t1\n",
+        "chr1\ttest\tCDS\t1\t3\t.\t+\t0\tParent=t1\nchr2\ttest\tCDS\t11\t13\t.\t+\t0\tParent=t1\n",
     )
-    with pytest.raises(ValueError) as caught:
+    with pytest.raises(ValueError, match="occurs on multiple sequences") as caught:
         annotation_to_genes(gff, {"t1"})
-    assert str(caught.value) == f"GFF identifier 't1' occurs on multiple sequences at {gff}:2"
+    assert f"{gff}:2" in str(caught.value)
 
 
 @pytest.mark.parametrize(

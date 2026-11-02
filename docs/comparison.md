@@ -1,0 +1,117 @@
+# Shared-reference copy profiles
+
+`report` compares independently assigned local copies on identical reference BED coordinates. It consumes closed JCVI anchors, not sequence alignments or a SynMap JSON export.
+
+```bash
+kffractbias report --manifest comparisons.tsv --output-dir report --prefix comparison \
+  --window-size 100 --step-size 1 --denominator all
+```
+
+The TSV manifest has `analysis_id`, `species`, `expected_copies`, `target_bed`, `query_bed`, `synteny_file`, and `mapping_file`. Paths are relative to the manifest. IDs must be unique. Every target BED must contain identical genes, sequence identifiers, coordinates, strands and order.
+
+A mapping TSV has `gene_id`, `group_id`, `copy`, `segment_id`. Each local group must contain every expected copy label. Assignment must be independent of the measured retention outcome. Unassigned query genes are excluded and counted in the audit. Query sequences and contiguous assignment segments remain separate; no physical joining or genome-wide copy phasing is inferred.
+
+Within each native JCVI block and assignment segment, at least 10 distinct reference anchors define a callable interior, trimmed by five reference-gene ranks at each end. A reference locus is callable only if exactly one local group has evidence for every expected copy. Missing or ambiguous groups remain unknown. Absence of an anchor inside a callable interior is zero detection. Fragment hits are combined by logical OR per local copy before summing.
+
+All species share one callable mask. Complete windows never cross reference sequences. `all` uses every reference gene in window construction; `syntenic` selects genes detected in every analysis before ranking. `callable` selects the common callable loci before constructing windows, regardless of their detected copy count. Thus every callable-based 100-gene window has exactly 100 shared opportunities, but can span more than 100 original reference ranks. Start/end ranks always retain the original reference coordinates. These plots describe the callable subset, not the whole reference genome. The default `all` requires all window loci to be jointly callable. `--minimum-callable-fraction` explicitly permits partial coverage, with only shared callable genes in the denominator. Report this threshold and the coverage distribution when using partial windows. Unknown loci never become zeros.
+
+Outputs are `<prefix>.loci.tsv`, `.report_windows.tsv`, `.report.json`, `.normalised.{pdf,png,svg}`, `.raw.{pdf,png,svg}`, and `.profiles_all.pdf`. Tables include explicit status, shared callable counts, copy values and segment IDs. JSON records source/input/output hashes, settings and coverage audits. `--no-plot` skips figures. Publication uses per-prefix locking, input snapshots and rollback.
+
+When no reference sequence contains enough eligible genes for a complete window, the locus table and summary are still published. The window table contains its header and zero rows, and figures explicitly show "Not estimable". This does not relax callability or window size.
+
+The black trace shows total detected copies divided by expected depth in normalised figures. Coloured traces show individual local-copy detection without dividing by depth. Raw figures retain the summed percentage, which can exceed 100. Boxplots describe overlapping windows and do not constitute independent statistical observations. All plots use common vertical limits across species. Profile x axes use the full reference chromosome ranks for every species; `k` in a tick label denotes 1000 genes. Copy traces break at native segment or assignment changes.
+
+`--plot-config` accepts JSON keys `font_family`, `font_size`, `font_files`, `width_pt`, `height_pt`, `dpi`, `reference_seqids`, and `representative_seqids`. Defaults are DejaVu Sans, 8 pt, 518.4 pt wide, 180 pt per species, 300 dpi, and the first three reference sequences. `reference_seqids` explicitly orders displayed reference chromosomes and preserves empty chromosomes as not estimable. It must contain every observed window sequence and may only name sequences present in the reference BED. Font-file paths are relative to this JSON. Text bounds and resolved fonts are verified before publication.
+
+### Publication styles and stable series colours
+
+The plot configuration also accepts:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `palette` | `categorical` | `categorical` preserves the first ten category colours and extends without cycling; `pastel` mixes the category colours with white. |
+| `series_colours` | `{}` | Nested `analysis_id` → copy/sequence label → opaque Matplotlib colour string overrides. |
+| `total_colour` | `black` | Colour of the total trace. |
+| `series_alpha` | `0.85` | Individual trace opacity, greater than zero and at most one. |
+| `legend` | `text` | `text`, `graphical` (line samples), or `none`. |
+| `all_profiles_scale` | `normalised` | `normalised` divides totals by expected copies; `raw` uses the summed percentage in every all-reference PDF page. |
+
+Colours are assigned once per analysis from its complete input label order,
+then reused in all reference panels, normalised/raw figures and all-reference
+pages. A label retains its colour when a panel lacks another series or when
+window filtering removes that series. In native unmasked mode, labels are
+query BED sequence IDs. With a mapping file, labels are its `copy` values,
+shared across local groups; they do not imply genome-wide parental phasing.
+Unknown analysis IDs or labels and invalid/transparent colour strings are
+rejected. An override for a valid input label without plotted evidence is
+recorded in `unused_series_colour_labels`.
+
+For example, a plot configuration for a manifest analysis named `query_a`
+with native query sequences `chr8` and `chr17` can contain:
+
+```json
+{
+  "width_pt": 518.4,
+  "height_pt": 518.4,
+  "palette": "pastel",
+  "series_colours": {
+    "query_a": {"chr8": "#e6b979", "chr17": "#8bb9dc"}
+  },
+  "total_colour": "#b53c31",
+  "series_alpha": 0.9,
+  "legend": "graphical",
+  "all_profiles_scale": "raw"
+}
+```
+
+Replace the IDs with labels from the supplied inputs. The same configuration
+can be passed as the Python API's `plot_config` object. Box interiors are
+white. No global heading is added; report the window size, denominator and
+total normalisation in the figure caption. The report JSON records resolved
+colours, opacity, legend mode and all-reference scale in `plot`, alongside
+the requested configuration in `parameters.plot_config`. Styling does not
+alter locus/window TSVs or denominator selection. The legacy `total_black`
+metadata key retains its normalisation description; `total_colour` records
+the actual line colour.
+
+`--raw-unmasked` is a separate descriptive historical mode: it counts native query sequences (or provided copy mappings) without callable-interior masking. It must not be interpreted as a matched absence analysis. Modern JCVI anchors do not reproduce an older CoGe/SynMap analysis merely because window parameters agree.
+
+## Independent pairwise reports
+
+Use `--comparison-scope pairwise` to aggregate each reference/query comparison
+independently while keeping the same reference BED coordinates. The default
+`shared` retains the existing common-mask behavior and schema 1.
+
+```bash
+kffractbias report --manifest comparisons.tsv --output-dir pairwise_report \
+  --comparison-scope pairwise --raw-unmasked --denominator syntenic \
+  --window-size 100 --step-size 1
+```
+
+Each pair selects its own denominator before windowing: `syntenic` uses that
+pair's detected reference loci, `all` uses every selected reference locus, and
+`callable` uses that pair's callable loci. The masked mode retains the existing
+within-pair callability rules. `--raw-unmasked` instead counts observed local
+copies without requiring all expected copies to be callable. An absent match
+means no syntelog detected, not demonstrated gene loss. Raw copy curves are
+computed independently of other copies; native segment signatures break curves
+when their evidence changes, including fragment-set changes. Fragment hits are
+still combined by OR for each reference gene/local copy. Copies remain local,
+not genome-wide phased parental identities.
+
+Pairwise reports use **schema 2**. Locus rows retain the per-analysis `callable`
+field and omit `common_callable`. Window rows use `callable_genes` and status
+`insufficient_callable` in place of their `common` counterparts. In unmasked
+mode every selected reference locus is countable, including a locus with no
+detected match when the denominator is `all`. The summary's
+`counts_per_analysis` maps each analysis ID to `callable_loci`,
+`selected_reference_loci`, `windows`, and `estimable_windows`. It omits the
+shared scalar counts because denominators and window counts can differ.
+Single-pair and multi-pair runs give identical numerical rows for each pair,
+regardless of other pairs' evidence or order. Original reference ranks and
+window endpoint genes remain in the output to locate independently chosen
+windows. Their physical spans can differ across pairs.
+
+Boxplots summarize each pair's own windows. They are descriptive, not matched
+observations for species-level inference. Display the per-pair denominator and
+window counts, and assess `all` as a denominator sensitivity analysis.

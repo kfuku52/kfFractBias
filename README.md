@@ -34,6 +34,8 @@ describe this offline CLI; the upstream CoGe Wiki describes the original web too
 - long-form gene and sliding-window TSV outputs
 - JSON provenance with input hashes, parameters, and source-code identity
 - non-interactive PDF and PNG plots
+- [shared-reference publication plots](docs/comparison.md#publication-styles-and-stable-series-colours)
+  with stable sequence colours, explicit overrides, line-sample legends and selectable total scale
 
 After the software and its dependencies are installed, analysis does not need
 network access.
@@ -424,3 +426,9 @@ If you use kfFractBias, cite the original FractBias publication:
 ## License
 
 MIT. The original copyright and license are retained in [`LICENSE`](LICENSE).
+
+Shared-reference copy-aware reports are available with `kffractbias report`; see [the comparison guide](docs/comparison.md). Existing `calculate`, `compare` and `selfcompare` outputs are unchanged.
+
+Independent outgroup/query reports are available with
+`report --comparison-scope pairwise`; see [pairwise report denominators and
+outputs](docs/comparison.md#independent-pairwise-reports).

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+from bisect import bisect_right
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -27,8 +28,10 @@ def write_self_evidence(
     for index, gene in enumerate(genes):
         chromosome_counts[gene.seqid] += 1
         local_ranks[index] = chromosome_counts[gene.seqid]
-    spans: Counter[int] = Counter()
-    partner_chromosomes: dict[int, set[str]] = defaultdict(set)
+    coverage_events: dict[int, list[tuple[str, int]]] = defaultdict(list)
+    chromosome_breaks = [
+        rank for rank in range(1, len(genes)) if genes[rank - 1].seqid != genes[rank].seqid
+    ]
     anchor_partners: dict[int, set[int]] = defaultdict(set)
     block_rows = []
     for index, block in enumerate(blocks, 1):
@@ -51,11 +54,10 @@ def write_self_evidence(
             low, high = min(ranks), max(ranks)
             chromosome = genes[low].seqid
             partner = genes[opposite[0]].seqid
-            for rank in range(low, high + 1):
-                if genes[rank].seqid != chromosome:
-                    raise ValueError("Prepared BED chromosomes must be contiguous in rank order.")
-                spans[rank] += 1
-                partner_chromosomes[rank].add(partner)
+            if bisect_right(chromosome_breaks, low) != bisect_right(chromosome_breaks, high):
+                raise ValueError("Prepared BED chromosomes must be contiguous in rank order.")
+            coverage_events[low].append((partner, 1))
+            coverage_events[high + 1].append((partner, -1))
             row.update(
                 {
                     f"{arm}_seqid": chromosome,
@@ -101,12 +103,23 @@ def write_self_evidence(
         "num_anchor_partners",
         "num_partner_chromosomes",
     ]
+    active_partners: Counter[str] = Counter()
+    active_depth = covered_count = 0
+    distribution: Counter[int] = Counter()
     with paths["depth"].open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(
             handle, fieldnames=depth_columns, delimiter="\t", lineterminator="\n"
         )
         writer.writeheader()
         for rank, gene in enumerate(genes):
+            # End events occur after the inclusive arm, before the next row.
+            for partner, change in coverage_events.get(rank, ()):
+                active_depth += change
+                active_partners[partner] += change
+                if not active_partners[partner]:
+                    del active_partners[partner]
+            distribution[active_depth] += 1
+            covered_count += active_depth > 0
             writer.writerow(
                 {
                     "seqid": gene.seqid,
@@ -114,22 +127,19 @@ def write_self_evidence(
                     "gene_rank": local_ranks[rank],
                     "start": gene.start,
                     "end": gene.end,
-                    "block_arm_depth": spans[rank],
+                    "block_arm_depth": active_depth,
                     "num_anchor_partners": len(anchor_partners.get(rank, set())),
-                    "num_partner_chromosomes": len(partner_chromosomes.get(rank, set())),
+                    "num_partner_chromosomes": len(active_partners),
                 }
             )
-    distribution = Counter(spans[rank] for rank in range(len(genes)))
     summary = {
         "schema_version": 1,
         "stage": "prequota-lifted-self-blocks",
         "num_genes": len(genes),
         "num_blocks": len(blocks),
-        "num_span_covered_genes": sum(spans[rank] > 0 for rank in range(len(genes))),
+        "num_span_covered_genes": covered_count,
         "num_anchor_genes": len(anchor_partners),
-        "gene_span_coverage": sum(spans[rank] > 0 for rank in range(len(genes))) / len(genes)
-        if genes
-        else 0,
+        "gene_span_coverage": covered_count / len(genes) if genes else 0,
         "anchor_gene_coverage": len(anchor_partners) / len(genes) if genes else 0,
         "block_arm_depth_distribution": {
             str(depth): count for depth, count in sorted(distribution.items())

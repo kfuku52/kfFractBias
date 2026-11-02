@@ -1,5 +1,13 @@
 # Updating an older checkout
 
+Comparison plots now keep a sequence/copy colour fixed across reference panels
+and extend categorical colours beyond ten series. These visual corrections do
+not change retention calculations or TSV schemas. The optional publication
+settings and resolved colour metadata are documented in
+[comparison styles](comparison.md#publication-styles-and-stable-series-colours).
+The all-reference PDF still defaults to expected-copy normalisation; select
+`all_profiles_scale: "raw"` for summed percentages.
+
 The current `master` line is a development build identified by a `.dev` version.
 Historical 0.1.3 and 0.1.4 were untagged milestones; different commits could
 report the same version while implementing different behavior. The
@@ -58,3 +66,10 @@ require `calculate --self` and the same BED on both axes. That reuse changes
 profiling only. It cannot repair anchors lost or incorrectly selected by an
 older aligner, self filter, or quota stage. See the reuse commands in the
 [README](../README.md) and [calculation rules](methods.md).
+
+## Independent reports in 0.2.0.dev7
+
+`report --comparison-scope pairwise` is an opt-in schema-2 report. Existing
+shared reports keep schema 1, their columns, and numerical behavior. Consumers
+of pairwise reports must read per-analysis counts and `callable_genes`; see
+[comparison reports](comparison.md#independent-pairwise-reports).
