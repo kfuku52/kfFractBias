@@ -114,7 +114,8 @@ def plot_comparison(
             if label in observed_labels or label in requested
         }
         unused_colours[item.analysis_id] = sorted(set(requested) - observed_labels, key=natural_key)
-    family = config.get("font_family", "DejaVu Sans")
+    default_family = "DejaVu Sans"
+    family = config.get("font_family", default_family)
     size = float(config.get("font_size", 8))
     width, height = (
         float(config.get("width_pt", 518.4)),
@@ -123,9 +124,14 @@ def plot_comparison(
     dpi = int(config.get("dpi", 300))
     if not all(math.isfinite(v) and v > 0 for v in [size, width, height, dpi]):
         raise ValueError("Plot dimensions, DPI and font size must be positive and finite")
-    selector = font_manager.FontManager()
-    for path in config.get("font_files", []):
-        selector.addfont(str(path))
+    font_files = config.get("font_files", [])
+    if family == default_family and not font_files:
+        # Matplotlib already indexed its bundled fonts when it loaded the cache.
+        selector = font_manager.fontManager
+    else:
+        selector = font_manager.FontManager()
+        for path in font_files:
+            selector.addfont(str(path))
     selector.findfont(font_manager.FontProperties(family=family), fallback_to_default=False)
     observed = {r["target_seqid"] for profile in windows for r in profile}
     reference_counts = Counter(g.seqid for g in read_bed(items[0].target_bed))

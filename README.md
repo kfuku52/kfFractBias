@@ -40,6 +40,28 @@ describe this offline CLI; the upstream CoGe Wiki describes the original web too
 After the software and its dependencies are installed, analysis does not need
 network access.
 
+## Example plots
+
+These figures use synthetic synteny and 40-gene sliding windows. See the
+[plot example](examples/plots/README.md) for the inputs and commands.
+
+### Chromosome retention profiles (`calculate`)
+
+Each line shows the percentage of reference genes in the window with a
+syntenic match on one query chromosome. `compare` and `selfcompare` use the
+same figure format.
+
+![Sliding-window retention for query chromosomes chr1A and chr1B](examples/plots/retention.png)
+
+### Shared-reference copy profiles (`report`)
+
+Boxplots summarize windows by reference chromosome for each query. The right
+panels show individual local copies in colour and their summed detection rate
+in black. A total of 150% corresponds to 1.5 detected copies per reference gene
+on average in that window.
+
+![Chromosome boxplots and summed copy detection profiles for two synthetic queries](examples/plots/shared-reference.png)
+
 ## Installation
 
 Python 3.11 or newer on Linux or macOS is required. Output locking and replacement

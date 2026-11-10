@@ -197,8 +197,13 @@ def test_invalid_inputs_preserve_existing_report(tmp_path, problem):
     assert (out / "comparison.report.json").read_bytes() == previous
 
 
-def test_plots_and_all_reference_pages(tmp_path):
-    pytest.importorskip("matplotlib")
+def test_plots_and_all_reference_pages(tmp_path, monkeypatch):
+    font_manager = pytest.importorskip("matplotlib.font_manager")
+
+    def unexpected_font_scan(*args, **kwargs):
+        pytest.fail("Default report plots should reuse Matplotlib's font cache")
+
+    monkeypatch.setattr(font_manager.FontManager, "__init__", unexpected_font_scan)
     a = fixture(tmp_path)
     path = manifest(tmp_path, [a])
     summary = comparison_report(
