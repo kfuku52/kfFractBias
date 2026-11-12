@@ -1,19 +1,26 @@
 # kfFractBias
 
+> [!IMPORTANT]
+> **Development continues in [LOCUSKIT](https://github.com/kfuku52/locuskit).**
+> This repository is archived and remains available for reference.
+> The FractBias commands are available as `locuskit fractbias` and through the
+> `kffractbias` compatibility command. See the
+> [FractBias guide](https://github.com/kfuku52/locuskit/blob/main/docs/fractbias.md).
+
 `kfFractBias` is a Python 3 command-line program for calculating and plotting
-gene-retention and fractionation-bias profiles. It is a maintained fork and
-offline redesign of
+gene-retention and fractionation-bias profiles. It is an offline redesign of
 [`SynMapFractBiasAnalysis`](https://github.com/bjoyce3/SynMapFractBiasAnalysis).
 
 The original FractBias implementation was developed by Blake L. Joyce, Asher
 Haug-Baltzell, Sean Davey, Matthew Bomhoff, James C. Schnable, and Eric Lyons.
-This repository contains the maintained Python 3 implementation; the original
-Python 2 and notebook sources remain available in the Git history.
+This repository preserves the Python 3 implementation. The original Python 2
+and notebook sources remain available in the Git history.
 
-The `master` branch is the source development line, identified by a `.dev`
-package version. The earlier `0.1.3` and `0.1.4` labels were untagged development
-milestones, not published GitHub releases. Install from this repository and
-record both `kffractbias version` and `git rev-parse HEAD` when reporting results.
+The archived `master` branch contains the last kfFractBias development snapshot,
+identified by a `.dev` package version. The earlier `0.1.3` and `0.1.4` labels
+were untagged development milestones, not published GitHub releases. To
+reproduce results from this repository, install from the matching commit and
+record both `kffractbias version` and `git rev-parse HEAD`.
 New summaries also record the package's Git revision/dirty state when available
 and a Python-source fingerprint, including for installations without Git.
 See the [migration guide](docs/migration.md) for changes from those snapshots.
